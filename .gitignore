@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Database files (auto-created on server startup)
+*.db
+
+# Generated media (too large for GitHub)
+data/generated_videos/
+data/generated_images/
+data/
+
+# Environment
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# Gemini AI config
+.gemini/
