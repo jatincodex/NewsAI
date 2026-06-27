@@ -24,10 +24,31 @@ class Settings(BaseSettings):
     
     model_config = SettingsConfigDict(env_prefix="NEWS_AI_")
 
-settings = Settings()
+try:
+    settings = Settings()
+except Exception as e:
+    import sys
+    print(f"WARNING: Settings validation failed, using safe fallback defaults: {e}", file=sys.stderr)
+    class FallbackSettings:
+        PROJECT_NAME = "News AI - Ingestion & Verification Engine"
+        BASE_DIR = Path(__file__).resolve().parent.parent
+        TRUSTED_DOCS_DIR = BASE_DIR / "data" / "trusted_docs"
+        GENERATED_VIDEOS_DIR = BASE_DIR / "data" / "generated_videos"
+        GENERATED_IMAGES_DIR = BASE_DIR / "data" / "generated_images"
+        DATABASE_URL = "sqlite:///./news_ai.db"
+        CELERY_BROKER_URL = "redis://localhost:6379/0"
+        CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+        CELERY_TASK_ALWAYS_EAGER = True
+        CONFIDENCE_THRESHOLD = 0.95
+    settings = FallbackSettings()
 
 # Ensure directories exist
-settings.TRUSTED_DOCS_DIR.mkdir(parents=True, exist_ok=True)
-settings.GENERATED_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-settings.GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-(settings.BASE_DIR / "tests").mkdir(parents=True, exist_ok=True)
+try:
+    settings.TRUSTED_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    settings.GENERATED_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+    settings.GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    (settings.BASE_DIR / "tests").mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    import sys
+    print(f"WARNING: Failed to create directories: {e}", file=sys.stderr)
+
