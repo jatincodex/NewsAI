@@ -1,28 +1,45 @@
-import os
-from celery import Celery
-from app.config import settings
+"""
+Celery-free task runner stub for deployment.
+Provides the same .task() decorator and .delay() interface as Celery,
+but runs everything synchronously in-process (same as ALWAYS_EAGER=True).
+No celery, redis, or broker needed.
+"""
+import logging
 
-# Force eager mode dynamically if direct environment variable is present, 
-# bypassing any cached singleton issues during pytest collection.
-is_eager = settings.CELERY_TASK_ALWAYS_EAGER or os.getenv("NEWS_AI_CELERY_TASK_ALWAYS_EAGER", "").lower() in ("true", "1")
+logger = logging.getLogger(__name__)
 
-broker_url = "memory://" if is_eager else settings.CELERY_BROKER_URL
-result_backend = "cache+memory://" if is_eager else settings.CELERY_RESULT_BACKEND
 
-celery_app = Celery(
-    "news_ai_tasks",
-    broker=broker_url,
-    backend=result_backend
-)
+class _SyncTask:
+    """Wraps a function to provide a .delay() method that calls it directly."""
+    def __init__(self, fn):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        self.__doc__ = fn.__doc__
 
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-    task_always_eager=is_eager,
-)
+    def delay(self, *args, **kwargs):
+        """Run the task synchronously (no queue)."""
+        logger.info(f"[SyncTask] Running task: {self.__name__}")
+        return self.fn(*args, **kwargs)
 
-# Auto-discover tasks from app.tasks
-celery_app.autodiscover_tasks(["app"], force=True)
+    def __call__(self, *args, **kwargs):
+        return self.fn(*args, **kwargs)
+
+
+class _SyncCeleryApp:
+    """Minimal Celery-compatible app that runs tasks synchronously."""
+
+    def task(self, *args, name=None, **kwargs):
+        """Decorator that wraps functions in _SyncTask."""
+        if len(args) == 1 and callable(args[0]):
+            # Called as @celery_app.task (no arguments)
+            return _SyncTask(args[0])
+        # Called as @celery_app.task(name=...) with arguments
+        def decorator(fn):
+            return _SyncTask(fn)
+        return decorator
+
+    def autodiscover_tasks(self, *args, **kwargs):
+        pass  # No-op in sync mode
+
+
+celery_app = _SyncCeleryApp()
