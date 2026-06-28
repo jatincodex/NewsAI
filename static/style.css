@@ -1137,27 +1137,23 @@ body.dark-mode {
     background: rgba(4, 2, 8, 0.85);
     backdrop-filter: blur(8px);
     z-index: 1000;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.3s ease;
 }
 
 .modal-overlay.active {
+    display: flex;
     opacity: 1;
     pointer-events: auto;
 }
 
-/* Auth Cards styling */
-.auth-modal {
-    pointer-events: auto; /* Always interactive */
-    opacity: 1;
-}
-
+/* Auth Modal — no special overrides; relies solely on .active class */
 .auth-modal.hidden {
-    display: none;
+    display: none !important;
 }
 
 .auth-card {
@@ -1455,12 +1451,4 @@ body.dark-mode {
     transform: scale(1.15);
 }
 
-/* Disable auth overlays for simplified direct access */
-#auth-modal, #google-modal, #forgot-pwd-modal {
-    display: none !important;
-}
 
-/* Hide logout button */
-.btn-logout {
-    display: none !important;
-}

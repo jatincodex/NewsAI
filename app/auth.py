@@ -39,7 +39,7 @@ class AuthHandler:
             payload = f"{user_id_str}:{username}"
             expected_signature = hashlib.sha256((payload + cls.SALT).encode('utf-8')).hexdigest()[:16]
             if signature == expected_signature:
-                return int(user_id_str)
+                return user_id_str
         except Exception:
             pass
         return None

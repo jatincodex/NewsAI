@@ -1,101 +1,108 @@
 import os
+import time
 import uuid
 import random
 import shutil
+import logging
+import json
+import asyncio
 from typing import List, Optional
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from app.config import settings
-from app.database import Base, engine, get_db
 from app.auth import AuthHandler
-from app.models import SocialPost, TrustedDocument, User, Follow, Comment, SavedPost, DirectMessage
-from app.schemas import (
-    SocialPostIngestPayload,
-    SocialPostResponse,
-    TrustedDocumentCreate,
-    TrustedDocumentResponse,
-    UserCreate,
-    UserLogin,
-    UserResponse,
-    UserUpdate,
-    UserProfileResponse,
-    CommentCreate,
-    CommentResponse,
-    MessageCreate,
-    MessageResponse,
-    UserGoogleLogin,
-    ForgotPasswordRequest,
-    ResetPasswordRequest
-)
 from app.tasks import process_social_post, generate_video_task
+from app.crawler_agent import run_crawler_task, stop_crawler
+from app.cache import get_cached_posts, set_cached_posts, invalidate_posts_cache
+from app.firebase_config import get_db_client, verify_token
 
-# Create SQL tables automatically on startup
-Base.metadata.create_all(bind=engine)
+logger = logging.getLogger(__name__)
+
+# --- 1. LIFESPAN EVENT HANDLER ---
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: spawn async background crawler task
+    crawler_task = asyncio.create_task(run_crawler_task(15))
+    logger.info("FastAPI lifespan startup completed.")
+    yield
+    # Shutdown: set cancel triggers and cancel background loop
+    stop_crawler()
+    crawler_task.cancel()
+    try:
+        await crawler_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("FastAPI lifespan shutdown completed.")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Instagram-style news container platform with verification and reels synthesis."
+    description="Instagram-style news container platform with verification and reels synthesis.",
+    lifespan=lifespan
 )
-
-from app.crawler_agent import crawler_agent_instance
-
-@app.on_event("startup")
-def startup_event():
-    crawler_agent_instance.start_agent()
-
-@app.on_event("shutdown")
-def shutdown_event():
-    crawler_agent_instance.stop_agent()
 
 # Mount static folder for assets
 app.mount("/static", StaticFiles(directory=str(settings.BASE_DIR / "static")), name="static")
 
 @app.middleware("http")
 async def add_no_cache_headers(request, call_next):
+    """Middle ware to inject standard cache-busting headers for developer ease."""
     response = await call_next(request)
-    if request.url.path.startswith("/static/") or request.url.path == "/":
+    if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
 
-# --- AUTHENTICATION DEPENDENCIES ---
+# --- 2. AUTHENTICATION DEPENDENCIES ---
 
-def get_current_user(db: Session = Depends(get_db), authorization: Optional[str] = Header(None)) -> Optional[User]:
-    """Dependency to retrieve the currently logged in user context."""
-    is_test = "test" in settings.DATABASE_URL or "test" in os.getenv("NEWS_AI_DATABASE_URL", "")
-    if is_test:
-        if not authorization:
+def get_current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """Dependency to retrieve the currently logged in user context via Firebase ID tokens."""
+    if not authorization:
+        return None
+        
+    token = authorization
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+        
+    try:
+        decoded = verify_token(token)
+        uid = decoded.get("uid") or decoded.get("user_id")
+        email = decoded.get("email")
+        if not uid or not email:
             return None
-        token = authorization
-        if authorization.startswith("Bearer "):
-            token = authorization[7:]
-        user_id = AuthHandler.verify_token(token)
-        if not user_id:
-            return None
-        return db.query(User).filter(User.id == user_id).first()
+            
+        db = get_db_client()
+        user_ref = db.collection("users").document(uid)
+        snap = user_ref.get()
+        if snap.exists:
+            return snap.to_dict()
+            
+        # First-time OAuth login handler: create user document on the fly
+        username = decoded.get("username") or email.split("@")[0]
+        display_name = decoded.get("name") or decoded.get("display_name") or username.capitalize()
+        user_data = {
+            "id": uid,
+            "username": username,
+            "email": email,
+            "display_name": display_name,
+            "bio": "",
+            "avatar_index": random.randint(1, 8),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        user_ref.set(user_data)
+        return user_data
+    except Exception as e:
+        logger.error(f"Authentication token decoding failed: {e}")
+        return None
 
-    user = db.query(User).filter(User.username == "admin").first()
-    if not user:
-        user = User(
-            username="admin",
-            email="admin@gmail.com",
-            hashed_password=AuthHandler.hash_password("admin123"),
-            display_name="Admin Moderator",
-            avatar_index=1
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
-
-def require_user(user: Optional[User] = Depends(get_current_user)) -> User:
+def require_user(user: Optional[dict] = Depends(get_current_user)) -> dict:
     """Dependency that raises 401 if user is not authenticated."""
     if not user:
         raise HTTPException(
@@ -105,7 +112,7 @@ def require_user(user: Optional[User] = Depends(get_current_user)) -> User:
     return user
 
 
-# --- STATIC ASSETS ---
+# --- 3. STATIC ASSETS ---
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():
@@ -114,649 +121,751 @@ def read_root():
     if not index_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Dashboard frontend assets missing."
+            detail="Static landing file static/index.html not found."
         )
     with open(index_path, "r", encoding="utf-8") as f:
         return f.read()
 
 
-# --- AUTHENTICATION APIS ---
+# --- 4. SIGNUP & LOGIN APIS ---
+
+class UserSignupPayload:
+    def __init__(self, username: str, email: str, password: str, display_name: Optional[str] = None):
+        self.username = username
+        self.email = email
+        self.password = password
+        self.display_name = display_name
 
 @app.post("/auth/signup", status_code=status.HTTP_201_CREATED)
-def signup(payload: UserCreate, db: Session = Depends(get_db)):
-    is_test = "test" in settings.DATABASE_URL or "test" in os.getenv("NEWS_AI_DATABASE_URL", "")
-    if is_test:
-        email_clean = payload.email.strip().lower()
-        if not email_clean.endswith("@gmail.com"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Registration is restricted to valid Gmail accounts (@gmail.com) only."
-            )
-        existing_user = db.query(User).filter(User.username == payload.username).first()
-        if existing_user:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already taken.")
-        existing_email = db.query(User).filter(User.email == email_clean).first()
-        if existing_email:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered.")
-        
-        hashed = AuthHandler.hash_password(payload.password)
-        user = User(
-            username=payload.username,
-            email=email_clean,
-            hashed_password=hashed,
-            display_name=payload.display_name or payload.username,
-            avatar_index=1
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        token = AuthHandler.generate_token(user.id, user.username)
-        return {"token": token, "user": UserResponse.model_validate(user)}
+async def signup(payload: dict):
+    username = payload.get("username", "").strip()
+    email = payload.get("email", "").strip()
+    password = payload.get("password", "")
+    display_name = payload.get("display_name", "").strip()
 
-    user = get_current_user(db)
-    token = AuthHandler.generate_token(user.id, user.username)
-    return {"token": token, "user": UserResponse.model_validate(user)}
+    if not username or not email or not password:
+        raise HTTPException(status_code=400, detail="Missing required signup fields.")
+
+    if not email.endswith("@gmail.com"):
+        raise HTTPException(status_code=400, detail="Only @gmail.com Gmail addresses are supported.")
+
+    db = get_db_client()
+    # Check duplicate email
+    email_docs = db.collection("users").where("email", "==", email).get()
+    if email_docs:
+        raise HTTPException(status_code=400, detail="Gmail address already registered.")
+
+    # Check duplicate username
+    user_docs = db.collection("users").where("username", "==", username).get()
+    if user_docs:
+        raise HTTPException(status_code=400, detail="Username already taken.")
+
+    uid = f"uid_{uuid.uuid4().hex[:12]}"
+    hashed_password = AuthHandler.hash_password(password)
+
+    user_data = {
+        "id": uid,
+        "username": username,
+        "email": email,
+        "hashed_password": hashed_password,
+        "display_name": display_name or username.capitalize(),
+        "bio": "",
+        "avatar_index": random.randint(1, 8),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    db.collection("users").document(uid).set(user_data)
+    token = AuthHandler.generate_token(uid, username)
+    return {
+        "token": token,
+        "user": {
+            "id": uid,
+            "username": username,
+            "email": email,
+            "display_name": user_data["display_name"],
+            "avatar_index": user_data["avatar_index"]
+        }
+    }
 
 @app.post("/auth/login")
-def login(payload: UserLogin, db: Session = Depends(get_db)):
-    is_test = "test" in settings.DATABASE_URL or "test" in os.getenv("NEWS_AI_DATABASE_URL", "")
-    if is_test:
-        credential = payload.username.strip().lower()
-        user = db.query(User).filter(
-            or_(
-                User.username == credential,
-                User.email == credential
-            )
-        ).first()
-        if not user or not AuthHandler.verify_password(payload.password, user.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid username/email or password."
-            )
-        token = AuthHandler.generate_token(user.id, user.username)
-        return {"token": token, "user": UserResponse.model_validate(user)}
+async def login(payload: dict):
+    user_or_email = (payload.get("username_or_email") or payload.get("username") or "").strip()
+    password = payload.get("password", "")
 
-    user = get_current_user(db)
-    token = AuthHandler.generate_token(user.id, user.username)
-    return {"token": token, "user": UserResponse.model_validate(user)}
+    db = get_db_client()
+    user_data = None
+    
+    # Check if email search
+    if "@" in user_or_email:
+        snaps = db.collection("users").where("email", "==", user_or_email).get()
+    else:
+        snaps = db.collection("users").where("username", "==", user_or_email).get()
+
+    if snaps:
+        user_data = snaps[0].to_dict()
+
+    if not user_data or not AuthHandler.verify_password(password, user_data.get("hashed_password", "")):
+        raise HTTPException(status_code=401, detail="Invalid username/email or password.")
+
+    token = AuthHandler.generate_token(user_data["id"], user_data["username"])
+    return {
+        "token": token,
+        "user": {
+            "id": user_data["id"],
+            "username": user_data["username"],
+            "email": user_data["email"],
+            "display_name": user_data.get("display_name"),
+            "avatar_index": user_data.get("avatar_index")
+        }
+    }
 
 @app.post("/auth/google")
-def google_auth(payload: UserGoogleLogin, db: Session = Depends(get_db)):
-    is_test = "test" in settings.DATABASE_URL or "test" in os.getenv("NEWS_AI_DATABASE_URL", "")
-    if is_test:
-        email_clean = payload.email.strip().lower()
-        if not email_clean.endswith("@gmail.com"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Google Sign-In is restricted to valid Gmail accounts (@gmail.com) only."
-            )
-        user = db.query(User).filter(User.email == email_clean).first()
-        if not user:
-            prefix = email_clean.split("@")[0]
-            safe_username = "".join([c if c.isalnum() else "_" for c in prefix]).strip("_")
-            existing_username = db.query(User).filter(User.username == safe_username).first()
-            if existing_username:
-                safe_username = f"{safe_username}_{uuid.uuid4().hex[:4]}"
-            random_password = uuid.uuid4().hex
-            hashed = AuthHandler.hash_password(random_password)
-            user = User(
-                username=safe_username,
-                email=email_clean,
-                hashed_password=hashed,
-                display_name=payload.display_name or safe_username,
-                avatar_index=1
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-        token = AuthHandler.generate_token(user.id, user.username)
-        return {"token": token, "user": UserResponse.model_validate(user)}
+async def google_login(payload: dict):
+    email = payload.get("email", "").strip()
+    display_name = payload.get("display_name", "").strip()
 
-    user = get_current_user(db)
-    token = AuthHandler.generate_token(user.id, user.username)
-    return {"token": token, "user": UserResponse.model_validate(user)}
+    if not email.endswith("@gmail.com"):
+        raise HTTPException(status_code=400, detail="Only @gmail.com Google accounts allowed.")
+
+    db = get_db_client()
+    snaps = db.collection("users").where("email", "==", email).get()
+    
+    if snaps:
+        user_data = snaps[0].to_dict()
+    else:
+        # Create Google signup user on the fly
+        uid = f"uid_g_{uuid.uuid4().hex[:10]}"
+        username = email.split("@")[0]
+        user_data = {
+            "id": uid,
+            "username": username,
+            "email": email,
+            "display_name": display_name or username.capitalize(),
+            "bio": "",
+            "avatar_index": random.randint(1, 8),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        db.collection("users").document(uid).set(user_data)
+
+    token = AuthHandler.generate_token(user_data["id"], user_data["username"])
+    return {
+        "token": token,
+        "user": {
+            "id": user_data["id"],
+            "username": user_data["username"],
+            "email": user_data["email"],
+            "display_name": user_data.get("display_name"),
+            "avatar_index": user_data.get("avatar_index")
+        }
+    }
 
 @app.post("/auth/forgot-password")
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    email_clean = payload.email.strip().lower()
-    user = db.query(User).filter(User.email == email_clean).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email address not found."
-        )
+async def forgot_password(payload: dict):
+    email = payload.get("email", "").strip()
+    db = get_db_client()
+    snaps = db.collection("users").where("email", "==", email).get()
+    if not snaps:
+        raise HTTPException(status_code=404, detail="No registered account found with that email.")
     
-    # Generate 6-digit reset code
+    user_ref = snaps[0].reference
+    # Generate 6 digit pin
     code = f"{random.randint(100000, 999999)}"
-    user.reset_code = code
-    # Set expiration to 15 minutes
-    from datetime import timedelta
-    user.reset_code_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
-    db.commit()
+    expires = int(time.time()) + 600 # 10 mins
     
-    # Print reset code to terminal for easy retrieval during local testing
+    user_ref.update({
+        "reset_code": code,
+        "reset_code_expires": expires
+    })
+    
+    # Print reset key to standard console for visual testing
     print(f"\n=====================================")
     print(f"PASSWORD RESET REQUEST")
-    print(f"Email: {email_clean}")
+    print(f"Email: {email}")
     print(f"Reset Code: {code}")
-    print(f"=====================================\n")
-    
-    return {"message": "Reset code successfully generated.", "reset_code": code}
+    print(f"=====================================\n", flush=True)
+
+    return {"message": "Reset PIN code issued successfully.", "reset_code": code}
 
 @app.post("/auth/reset-password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
-    email_clean = payload.email.strip().lower()
-    user = db.query(User).filter(User.email == email_clean).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email address not found."
-        )
-        
-    if not user.reset_code or user.reset_code != payload.reset_code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid password reset code."
-        )
-        
-    expires = user.reset_code_expires
-    if expires:
-        now_val = datetime.now(timezone.utc) if expires.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
-        if now_val > expires:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password reset code has expired."
-            )
-            
-    # Reset password
-    hashed = AuthHandler.hash_password(payload.new_password)
-    user.hashed_password = hashed
-    user.reset_code = None
-    user.reset_code_expires = None
-    db.commit()
-    
+async def reset_password(payload: dict):
+    email = payload.get("email", "").strip()
+    code = str(payload.get("code") or payload.get("reset_code") or "").strip()
+    new_password = payload.get("new_password", "")
+
+    db = get_db_client()
+    snaps = db.collection("users").where("email", "==", email).get()
+    if not snaps:
+        raise HTTPException(status_code=404, detail="Email not registered.")
+
+    user_ref = snaps[0].reference
+    user_data = snaps[0].to_dict()
+
+    saved_code = user_data.get("reset_code")
+    expiry = user_data.get("reset_code_expires", 0)
+
+    if not saved_code or saved_code != code or int(time.time()) > expiry:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset PIN code.")
+
+    hashed_password = AuthHandler.hash_password(new_password)
+    user_ref.update({
+        "hashed_password": hashed_password,
+        "reset_code": None,
+        "reset_code_expires": None
+    })
     return {"message": "Password reset successfully."}
 
-@app.get("/auth/me", response_model=UserResponse)
-def get_me(user: User = Depends(require_user)):
+@app.get("/auth/me")
+def get_me(user: dict = Depends(require_user)):
     return user
 
-@app.post("/auth/update", response_model=UserResponse)
-def update_profile(payload: UserUpdate, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    if payload.display_name is not None:
-        user.display_name = payload.display_name.strip()
-    if payload.bio is not None:
-        user.bio = payload.bio.strip()
-    if payload.avatar_index is not None:
-        if 1 <= payload.avatar_index <= 8:
-            user.avatar_index = payload.avatar_index
+@app.post("/auth/update")
+def update_profile(payload: dict, user: dict = Depends(require_user)):
+    db = get_db_client()
+    user_ref = db.collection("users").document(user["id"])
+    
+    updates = {}
+    if payload.get("display_name") is not None:
+        updates["display_name"] = payload["display_name"].strip()
+    if payload.get("bio") is not None:
+        updates["bio"] = payload["bio"].strip()
+    if payload.get("avatar_index") is not None:
+        avatar = int(payload["avatar_index"])
+        if 1 <= avatar <= 8:
+            updates["avatar_index"] = avatar
             
-    db.commit()
-    db.refresh(user)
+    if updates:
+        user_ref.update(updates)
+        user.update(updates)
+        
     return user
 
 
-# --- SOCIAL FEED & INGESTION APIS ---
+# --- 5. SOCIAL FEED & INGESTION APIS ---
 
-@app.post("/ingest", response_model=SocialPostResponse, status_code=status.HTTP_201_CREATED)
-def ingest_social_post(payload: SocialPostIngestPayload, db: Session = Depends(get_db), current_user: Optional[User] = Depends(get_current_user)):
-    """
-    Ingest a new social media post payload.
-    Saves the post to the database, then triggers the Celery worker task.
-    """
-    existing_post = db.query(SocialPost).filter(SocialPost.post_id == payload.post_id).first()
-    if existing_post:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Post with ID '{payload.post_id}' has already been ingested."
-        )
-        
-    likes_count = payload.metadata.likes if payload.metadata else 0
-    retweets = payload.metadata.retweets if payload.metadata else 0
-    
-    post = SocialPost(
-        post_id=payload.post_id,
-        source=payload.source,
-        username=payload.username,
-        content=payload.content,
-        timestamp=payload.timestamp,
-        likes=likes_count,
-        retweets=retweets,
-        likes_count=likes_count,
-        status="pending",
-        user_id=current_user.id if current_user else None
-    )
-    
-    db.add(post)
-    db.commit()
-    db.refresh(post)
-    
-    process_social_post.delay(post.id)
-    return post
+@app.post("/ingest", status_code=status.HTTP_201_CREATED)
+def ingest_social_post(payload: dict, current_user: Optional[dict] = Depends(get_current_user)):
+    post_id = payload.get("post_id", "").strip()
+    if not post_id:
+        raise HTTPException(status_code=400, detail="Missing post_id key.")
 
-@app.post("/posts/create", response_model=SocialPostResponse, status_code=status.HTTP_201_CREATED)
-def create_custom_post(content: str, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    """Enables logged-in users to write custom posts, passing them through verification logic."""
+    db = get_db_client()
+    existing = db.collection("posts").document(post_id).get()
+    if existing.exists:
+        raise HTTPException(status_code=400, detail=f"Post with ID '{post_id}' already ingested.")
+
+    metadata = payload.get("metadata", {}) or {}
+    likes = metadata.get("likes") or 0
+    retweets = metadata.get("retweets") or 0
+
+    post_data = {
+        "id": post_id,
+        "post_id": post_id,
+        "source": payload.get("source", "X"),
+        "username": payload.get("username", "anonymous"),
+        "content": payload.get("content", ""),
+        "timestamp": payload.get("timestamp", datetime.now(timezone.utc).isoformat()),
+        "likes": likes,
+        "retweets": retweets,
+        "likes_count": likes,
+        "confidence_score": 0.0,
+        "accuracy_percentage": None,
+        "fact_check_report": None,
+        "status": "pending",
+        "video_path": None,
+        "image_path": None,
+        "user_id": current_user["id"] if current_user else None,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    db.collection("posts").document(post_id).set(post_data)
+    invalidate_posts_cache()
+    
+    # Trigger verification Celery task
+    process_social_post.delay(post_id)
+    return post_data
+
+@app.post("/posts/create", status_code=status.HTTP_201_CREATED)
+def create_custom_post(content: str, user: dict = Depends(require_user)):
     post_id = f"custom_{uuid.uuid4().hex[:8]}"
-    post = SocialPost(
-        post_id=post_id,
-        source="NewsAI",
-        username=user.username,
-        content=content,
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        likes=0,
-        retweets=0,
-        likes_count=0,
-        status="pending",
-        user_id=user.id
-    )
-    db.add(post)
-    db.commit()
-    db.refresh(post)
+    post_data = {
+        "id": post_id,
+        "post_id": post_id,
+        "source": "NewsAI",
+        "username": user["username"],
+        "content": content,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "likes": 0,
+        "retweets": 0,
+        "likes_count": 0,
+        "confidence_score": 0.0,
+        "accuracy_percentage": None,
+        "fact_check_report": None,
+        "status": "pending",
+        "video_path": None,
+        "image_path": None,
+        "user_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
     
-    process_social_post.delay(post.id)
-    return post
+    db = get_db_client()
+    db.collection("posts").document(post_id).set(post_data)
+    invalidate_posts_cache()
+    
+    # Trigger verification Celery task
+    process_social_post.delay(post_id)
+    return post_data
 
-@app.get("/posts", response_model=List[SocialPostResponse])
-def get_posts(status_filter: Optional[str] = None, db: Session = Depends(get_db)):
+@app.get("/posts")
+def get_posts(status_filter: Optional[str] = None):
     """Fetch all ingested social media posts (excluding rejected items)."""
-    q = db.query(SocialPost).filter(SocialPost.status != "rejected")
-    if status_filter:
-        q = q.filter(SocialPost.status == status_filter)
-    return q.order_by(SocialPost.created_at.desc()).all()
+    if not status_filter:
+        cached = get_cached_posts()
+        if cached is not None:
+            return cached
 
-@app.get("/posts/saved", response_model=List[SocialPostResponse])
-def get_saved_posts(db: Session = Depends(get_db), user: User = Depends(require_user)):
+    db = get_db_client()
+    snaps = db.collection("posts").get()
+    
+    results = []
+    for s in snaps:
+        data = s.to_dict()
+        if data.get("status") != "rejected":
+            if not status_filter or data.get("status") == status_filter:
+                results.append(data)
+
+    results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+    if not status_filter:
+        set_cached_posts(results, expire_seconds=30)
+
+    return results
+
+@app.get("/posts/saved")
+def get_saved_posts(user: dict = Depends(require_user)):
     """Retrieve bookmarked posts for the current authenticated user."""
-    saves = db.query(SavedPost).filter(SavedPost.user_id == user.id).all()
-    post_ids = [s.post_id for s in saves]
-    return db.query(SocialPost).filter(SocialPost.id.in_(post_ids)).order_by(SocialPost.created_at.desc()).all()
-
-@app.get("/posts/{post_id}", response_model=SocialPostResponse)
-def get_post_by_id(post_id: str, db: Session = Depends(get_db)):
-    """Retrieve details for a single social media post."""
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Post with ID '{post_id}' not found."
-        )
-    return post
-
-@app.post("/posts/{post_id}/like")
-def like_post(post_id: str, action: str, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found."
-        )
-    if action == "like":
-        post.likes_count += 1
-    elif action == "unlike" and post.likes_count > 0:
-        post.likes_count -= 1
-        
-    db.commit()
-    return {"likes_count": post.likes_count}
-
-
-# --- MEDIA SERVING APIS ---
-
-@app.get("/posts/{post_id}/video")
-def serve_post_video(post_id: str, db: Session = Depends(get_db)):
-    """Streams the vertical synthesized MP4 video file associated with a post."""
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post or not post.video_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Video for post ID '{post_id}' not found or generation not finished."
-        )
-        
-    video_file = Path(post.video_path)
-    if not video_file.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Video file is missing from local storage."
-        )
-        
-    return FileResponse(str(video_file), media_type="video/mp4", filename=video_file.name)
-
-@app.get("/posts/{post_id}/image")
-def serve_post_image(post_id: str, db: Session = Depends(get_db)):
-    """Serves the generated square PNG image associated with a post."""
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post or not post.image_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Image for post ID '{post_id}' not found."
-        )
-        
-    image_file = Path(post.image_path)
-    if not image_file.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Image card file is missing from local storage."
-        )
-        
-    return FileResponse(str(image_file), media_type="image/png")
-
-
-# --- TRUSTED DOCUMENTS ARCHIVE ---
-
-@app.post("/trusted-docs", response_model=TrustedDocumentResponse, status_code=status.HTTP_201_CREATED)
-def create_trusted_document(payload: TrustedDocumentCreate, db: Session = Depends(get_db)):
-    """Registers a trusted reference fact-checking document."""
-    existing_doc = db.query(TrustedDocument).filter(TrustedDocument.title == payload.title).first()
-    if existing_doc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Trusted document with title '{payload.title}' already registered."
-        )
-        
-    safe_title = "".join([c if c.isalnum() else "_" for c in payload.title]).strip("_")
-    filename = f"{safe_title}_{uuid.uuid4().hex[:6]}.txt"
+    db = get_db_client()
+    saves_snaps = db.collection("saves").where("user_id", "==", user["id"]).get()
+    saved_ids = [s.to_dict().get("post_id") for s in saves_snaps]
     
-    settings.TRUSTED_DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    file_path = settings.TRUSTED_DOCS_DIR / filename
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(payload.content)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to write trusted document to local filesystem: {str(e)}"
-        )
-        
-    db_doc = TrustedDocument(
-        title=payload.title,
-        filename=filename,
-        content=payload.content
-    )
-    db.add(db_doc)
-    db.commit()
-    db.refresh(db_doc)
-    
-    return db_doc
-
-@app.get("/trusted-docs", response_model=List[TrustedDocumentResponse])
-def list_trusted_documents(db: Session = Depends(get_db)):
-    """Retrieve list of all trusted documents."""
-    return db.query(TrustedDocument).all()
-
-
-# --- MANUAL REVIEW DECISION WORKSPACE ---
-
-@app.post("/posts/{post_id}/approve", response_model=SocialPostResponse)
-def approve_post(post_id: str, db: Session = Depends(get_db)):
-    """Manually approve a flagged post, overriding the safety gate and launching video synthesis."""
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Post with ID '{post_id}' not found."
-        )
-        
-    if post.status != "human_review_required":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only posts requiring review can be approved. Current status: '{post.status}'."
-        )
-        
-    post.status = "video_generation_pending"
-    db.commit()
-    
-    # Launch video generation task
-    generate_video_task.delay(post.id)
-    
-    # Refresh to load updates made by the Celery task (such as transitioning status to published and setting video_path)
-    db.refresh(post)
-    return post
-
-@app.post("/posts/{post_id}/reject", response_model=SocialPostResponse)
-def reject_post(post_id: str, db: Session = Depends(get_db)):
-    """Manually reject/discard a flagged post, preventing video synthesis."""
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Post with ID '{post_id}' not found."
-        )
-        
-    if post.status != "human_review_required":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only posts requiring review can be rejected. Current status: '{post.status}'."
-        )
-        
-    post.status = "rejected"
-    db.commit()
-    return post
-
-
-# --- SOCIAL USER INTERACTIONS APIS ---
-
-@app.post("/users/{username}/follow")
-def follow_user(username: str, db: Session = Depends(get_db), current_user: User = Depends(require_user)):
-    target_user = db.query(User).filter(User.username == username).first()
-    if not target_user:
-        raise HTTPException(status_code=404, detail="Target user not found.")
-    if target_user.id == current_user.id:
-        raise HTTPException(status_code=400, detail="You cannot follow yourself.")
-        
-    follow_relation = db.query(Follow).filter(
-        Follow.follower_id == current_user.id,
-        Follow.followed_id == target_user.id
-    ).first()
-    
-    if follow_relation:
-        db.delete(follow_relation)
-        db.commit()
-        return {"status": "unfollowed"}
-    else:
-        new_follow = Follow(follower_id=current_user.id, followed_id=target_user.id)
-        db.add(new_follow)
-        db.commit()
-        return {"status": "followed"}
-
-@app.get("/users/{username}/profile", response_model=UserProfileResponse)
-def get_user_profile(username: str, db: Session = Depends(get_db), current_user: Optional[User] = Depends(get_current_user)):
-    target_user = db.query(User).filter(User.username == username).first()
-    if not target_user:
-        raise HTTPException(status_code=404, detail="User not found.")
-        
-    posts_count = db.query(SocialPost).filter(SocialPost.username == username, SocialPost.status != "rejected").count()
-    followers_count = db.query(Follow).filter(Follow.followed_id == target_user.id).count()
-    following_count = db.query(Follow).filter(Follow.follower_id == target_user.id).count()
-    
-    is_following = False
-    if current_user:
-        is_following = db.query(Follow).filter(
-            Follow.follower_id == current_user.id,
-            Follow.followed_id == target_user.id
-        ).count() > 0
-        
-    return UserProfileResponse(
-        id=target_user.id,
-        username=target_user.username,
-        display_name=target_user.display_name,
-        bio=target_user.bio,
-        avatar_index=target_user.avatar_index,
-        posts_count=posts_count,
-        followers_count=followers_count,
-        following_count=following_count,
-        is_following=is_following
-    )
-
-
-# --- COMMENTS APIS ---
-
-@app.get("/posts/{post_id}/comments", response_model=List[CommentResponse])
-def get_comments(post_id: str, db: Session = Depends(get_db)):
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found.")
-        
-    comments = db.query(Comment).filter(Comment.post_id == post.id).order_by(Comment.created_at.asc()).all()
-    
-    res = []
-    for c in comments:
-        res.append(CommentResponse(
-            id=c.id,
-            user_id=c.user_id,
-            post_id=c.post_id,
-            text=c.text,
-            username=c.user.username,
-            avatar_index=c.user.avatar_index,
-            created_at=c.created_at
-        ))
-    return res
-
-@app.post("/posts/{post_id}/comments", response_model=CommentResponse)
-def add_comment(post_id: str, payload: CommentCreate, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found.")
-        
-    comment = Comment(
-        user_id=user.id,
-        post_id=post.id,
-        text=payload.text
-    )
-    db.add(comment)
-    db.commit()
-    db.refresh(comment)
-    
-    return CommentResponse(
-        id=comment.id,
-        user_id=comment.user_id,
-        post_id=comment.post_id,
-        text=comment.text,
-        username=user.username,
-        avatar_index=user.avatar_index,
-        created_at=comment.created_at
-    )
-
-
-# --- BOOKMARKS (SAVED POSTS) APIS ---
+    results = []
+    if saved_ids:
+        post_snaps = db.collection("posts").get()
+        for p in post_snaps:
+            data = p.to_dict()
+            if data.get("id") in saved_ids:
+                results.append(data)
+                
+    results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return results
 
 @app.post("/posts/{post_id}/save")
-def save_post(post_id: str, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
+def save_post(post_id: str, user: dict = Depends(require_user)):
+    db = get_db_client()
+    snap = db.collection("posts").document(post_id).get()
+    if not snap.exists:
         raise HTTPException(status_code=404, detail="Post not found.")
         
-    existing = db.query(SavedPost).filter(SavedPost.user_id == user.id, SavedPost.post_id == post.id).first()
+    post_data = snap.to_dict()
+    
+    # Check if already saved
+    existing = db.collection("saves").where("user_id", "==", user["id"]).where("post_id", "==", post_data["id"]).get()
     if existing:
         return {"status": "already_saved"}
         
-    saved = SavedPost(user_id=user.id, post_id=post.id)
-    db.add(saved)
-    db.commit()
+    save_id = f"save_{uuid.uuid4().hex[:10]}"
+    db.collection("saves").document(save_id).set({
+        "id": save_id,
+        "user_id": user["id"],
+        "post_id": post_data["id"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    invalidate_posts_cache()
     return {"status": "saved"}
 
 @app.delete("/posts/{post_id}/save")
-def unsave_post(post_id: str, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    post = db.query(SocialPost).filter(SocialPost.post_id == post_id).first()
-    if not post:
+def unsave_post(post_id: str, user: dict = Depends(require_user)):
+    db = get_db_client()
+    snap = db.collection("posts").document(post_id).get()
+    if not snap.exists:
         raise HTTPException(status_code=404, detail="Post not found.")
         
-    saved = db.query(SavedPost).filter(SavedPost.user_id == user.id, SavedPost.post_id == post.id).first()
-    if saved:
-        db.delete(saved)
-        db.commit()
+    post_data = snap.to_dict()
+    
+    existing = db.collection("saves").where("user_id", "==", user["id"]).where("post_id", "==", post_data["id"]).get()
+    if existing:
+        existing[0].reference.delete()
+        invalidate_posts_cache()
     return {"status": "unsaved"}
 
 
+@app.get("/posts/{post_id}")
+def get_post_by_id(post_id: str):
+    db = get_db_client()
+    snap = db.collection("posts").document(post_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    return snap.to_dict()
 
-# --- DIRECT MESSAGES (DMs) APIS ---
-
-@app.post("/messages", response_model=MessageResponse)
-def send_message(payload: MessageCreate, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    recipient = db.query(User).filter(User.username == payload.recipient_username).first()
-    if not recipient:
-        raise HTTPException(status_code=404, detail="Recipient user not found.")
-    if recipient.id == user.id:
-        raise HTTPException(status_code=400, detail="You cannot message yourself.")
+@app.post("/posts/{post_id}/like")
+def like_post(post_id: str, action: str, user: dict = Depends(require_user)):
+    db = get_db_client()
+    ref = db.collection("posts").document(post_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
         
-    msg = DirectMessage(
-        sender_id=user.id,
-        recipient_id=recipient.id,
-        text=payload.text
-    )
-    db.add(msg)
-    db.commit()
-    db.refresh(msg)
+    data = snap.to_dict()
+    likes = data.get("likes_count", 0)
+    if action == "like":
+        likes += 1
+    elif action == "unlike" and likes > 0:
+        likes -= 1
+        
+    ref.update({"likes_count": likes})
+    invalidate_posts_cache()
+    return {"likes_count": likes}
+
+
+# --- 6. MEDIA SERVING APIS ---
+
+@app.get("/posts/{post_id}/video")
+def serve_post_video(post_id: str):
+    db = get_db_client()
+    snap = db.collection("posts").document(post_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    video_path = snap.to_dict().get("video_path")
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video path missing.")
+    return FileResponse(video_path)
+
+@app.get("/posts/{post_id}/image")
+def serve_post_image(post_id: str):
+    db = get_db_client()
+    snap = db.collection("posts").document(post_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    image_path = snap.to_dict().get("image_path")
+    if not image_path:
+        raise HTTPException(status_code=404, detail="Image path missing.")
+    return FileResponse(image_path)
+
+
+# --- 7. TRUSTED DOCUMENT SOURCES APIS ---
+
+@app.post("/trusted-docs", status_code=status.HTTP_201_CREATED)
+def create_trusted_document(payload: dict):
+    title = payload.get("title", "").strip()
+    content = payload.get("content", "")
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="Missing doc attributes.")
+
+    filename = f"{title.lower().replace(' ', '_')}_{uuid.uuid4().hex[:4]}.txt"
+    settings.TRUSTED_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = settings.TRUSTED_DOCS_DIR / filename
     
-    return MessageResponse(
-        id=msg.id,
-        sender_id=msg.sender_id,
-        recipient_id=msg.recipient_id,
-        text=msg.text,
-        sender_username=user.username,
-        recipient_username=recipient.username,
-        created_at=msg.created_at
-    )
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Filesystem write failed: {e}")
 
-@app.get("/messages", response_model=List[MessageResponse])
-def get_messages(with_user: str, db: Session = Depends(get_db), user: User = Depends(require_user)):
-    other_user = db.query(User).filter(User.username == with_user).first()
-    if not other_user:
-        raise HTTPException(status_code=404, detail="User not found.")
+    db = get_db_client()
+    doc_id = f"doc_{uuid.uuid4().hex[:8]}"
+    doc_data = {
+        "id": doc_id,
+        "title": title,
+        "filename": filename,
+        "content": content,
+        "uploaded_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    db.collection("trusted_docs").document(doc_id).set(doc_data)
+    return doc_data
+
+@app.get("/trusted-docs")
+def list_trusted_documents():
+    db = get_db_client()
+    snaps = db.collection("trusted_docs").get()
+    return [s.to_dict() for s in snaps]
+
+
+# --- 8. MANUAL REVIEW DECISION WORKSPACE ---
+
+@app.post("/posts/{post_id}/approve")
+def approve_post(post_id: str):
+    db = get_db_client()
+    ref = db.collection("posts").document(post_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
         
-    # Get chat history between user and other_user
-    msgs = db.query(DirectMessage).filter(
-        or_(
-            (DirectMessage.sender_id == user.id) & (DirectMessage.recipient_id == other_user.id),
-            (DirectMessage.sender_id == other_user.id) & (DirectMessage.recipient_id == user.id)
-        )
-    ).order_by(DirectMessage.created_at.asc()).all()
+    data = snap.to_dict()
+    if data.get("status") != "human_review_required":
+        raise HTTPException(status_code=400, detail="Only posts requiring review can be approved.")
+
+    ref.update({"status": "video_generation_pending"})
+    # Run background video synthesis
+    generate_video_task.delay(post_id)
+    
+    invalidate_posts_cache()
+    # Return fresh state
+    return ref.get().to_dict()
+
+@app.post("/posts/{post_id}/reject")
+def reject_post(post_id: str):
+    db = get_db_client()
+    ref = db.collection("posts").document(post_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
+        
+    data = snap.to_dict()
+    if data.get("status") != "human_review_required":
+        raise HTTPException(status_code=400, detail="Only posts requiring review can be rejected.")
+
+    ref.update({"status": "rejected"})
+    invalidate_posts_cache()
+    return ref.get().to_dict()
+
+
+# --- 9. SOCIAL USER INTERACTIONS APIS ---
+
+@app.post("/users/{username}/follow")
+def follow_user(username: str, current_user: dict = Depends(require_user)):
+    db = get_db_client()
+    # Get target user
+    snaps = db.collection("users").where("username", "==", username).get()
+    if not snaps:
+        raise HTTPException(status_code=404, detail="Target user not found.")
+    target_user = snaps[0].to_dict()
+    
+    if target_user["id"] == current_user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot follow yourself.")
+
+    follow_snaps = db.collection("follows").where("follower_id", "==", current_user["id"]).where("followed_id", "==", target_user["id"]).get()
+    
+    if follow_snaps:
+        follow_snaps[0].reference.delete()
+        return {"status": "unfollowed"}
+    else:
+        doc_id = f"fol_{uuid.uuid4().hex[:10]}"
+        db.collection("follows").document(doc_id).set({
+            "id": doc_id,
+            "follower_id": current_user["id"],
+            "followed_id": target_user["id"],
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        return {"status": "followed"}
+
+@app.get("/users/{username}/profile")
+def get_user_profile(username: str, current_user: dict = Depends(require_user)):
+    db = get_db_client()
+    snaps = db.collection("users").where("username", "==", username).get()
+    if not snaps:
+        raise HTTPException(status_code=404, detail="User not found.")
+    target_user = snaps[0].to_dict()
+
+    # Query metrics
+    posts_snaps = db.collection("posts").where("username", "==", username).get()
+    posts_count = len(posts_snaps)
+
+    followers_snaps = db.collection("follows").where("followed_id", "==", target_user["id"]).get()
+    followers_count = len(followers_snaps)
+
+    following_snaps = db.collection("follows").where("follower_id", "==", target_user["id"]).get()
+    following_count = len(following_snaps)
+
+    is_following = any(f.to_dict().get("follower_id") == current_user["id"] for f in followers_snaps)
+
+    return {
+        "id": target_user["id"],
+        "username": target_user["username"],
+        "display_name": target_user.get("display_name"),
+        "bio": target_user.get("bio", ""),
+        "avatar_index": target_user.get("avatar_index", 1),
+        "posts_count": posts_count,
+        "followers_count": followers_count,
+        "following_count": following_count,
+        "is_following": is_following
+    }
+
+
+# --- 10. COMMENTS APIS ---
+
+@app.get("/posts/{post_id}/comments")
+def get_comments(post_id: str):
+    db = get_db_client()
+    # Resolve post doc_id
+    snap = db.collection("posts").document(post_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    post_data = snap.to_dict()
+
+    comments_snaps = db.collection("comments").where("post_id", "==", post_data["id"]).get()
     
     res = []
-    for m in msgs:
-        res.append(MessageResponse(
-            id=m.id,
-            sender_id=m.sender_id,
-            recipient_id=m.recipient_id,
-            text=m.text,
-            sender_username=user.username if m.sender_id == user.id else other_user.username,
-            recipient_username=other_user.username if m.sender_id == user.id else user.username,
-            created_at=m.created_at
-        ))
+    # Load commenters avatars and info
+    for c in comments_snaps:
+        c_data = c.to_dict()
+        user_snap = db.collection("users").document(c_data["user_id"]).get()
+        user_info = user_snap.to_dict() if user_snap.exists else {}
+        res.append({
+            "id": c_data["id"],
+            "user_id": c_data["user_id"],
+            "post_id": c_data["post_id"],
+            "text": c_data["text"],
+            "username": user_info.get("username", "unknown"),
+            "avatar_index": user_info.get("avatar_index", 1),
+            "created_at": c_data.get("created_at")
+        })
+        
+    res.sort(key=lambda x: x.get("created_at", ""))
     return res
 
-@app.get("/explore", response_model=List[SocialPostResponse])
-def explore_posts(query: Optional[str] = None, db: Session = Depends(get_db)):
-    """Explore and search posts by content term."""
-    q = db.query(SocialPost).filter(SocialPost.status != "rejected")
-    if query:
-        q = q.filter(SocialPost.content.like(f"%{query}%"))
-    return q.order_by(SocialPost.created_at.desc()).all()
+@app.post("/posts/{post_id}/comments")
+def add_comment(post_id: str, payload: dict, user: dict = Depends(require_user)):
+    db = get_db_client()
+    snap = db.collection("posts").document(post_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    post_data = snap.to_dict()
+
+    comment_id = f"com_{uuid.uuid4().hex[:10]}"
+    comment_data = {
+        "id": comment_id,
+        "user_id": user["id"],
+        "post_id": post_data["id"],
+        "text": payload.get("text", ""),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    db.collection("comments").document(comment_id).set(comment_data)
+    invalidate_posts_cache()
+    
+    return {
+        "id": comment_id,
+        "user_id": user["id"],
+        "post_id": post_data["id"],
+        "text": comment_data["text"],
+        "username": user["username"],
+        "avatar_index": user["avatar_index"],
+        "created_at": comment_data["created_at"]
+    }
 
 
-# --- RESET SYSTEM STATE ---
+# --- 11. DIRECT MESSAGING (DMs) APIS ---
 
-@app.get("/users", response_model=List[UserResponse])
-def list_users(db: Session = Depends(get_db)):
-    """Retrieve list of all registered users."""
-    return db.query(User).all()
+@app.get("/messages")
+def get_messages(with_user: str, user: dict = Depends(require_user)):
+    db = get_db_client()
+    # Resolve target user
+    snaps = db.collection("users").where("username", "==", with_user).get()
+    if not snaps:
+        raise HTTPException(status_code=404, detail="Target user not found.")
+    other_user = snaps[0].to_dict()
+
+    # Query direct message history (bi-directional DMs filter)
+    all_msgs = db.collection("messages").get()
+    
+    res = []
+    for m in all_msgs:
+        data = m.to_dict()
+        s_id = data.get("sender_id")
+        r_id = data.get("recipient_id")
+        if (s_id == user["id"] and r_id == other_user["id"]) or (s_id == other_user["id"] and r_id == user["id"]):
+            res.append({
+                "id": data["id"],
+                "sender_id": s_id,
+                "recipient_id": r_id,
+                "text": data["text"],
+                "sender_username": user["username"] if s_id == user["id"] else other_user["username"],
+                "recipient_username": other_user["username"] if s_id == user["id"] else user["username"],
+                "created_at": data.get("created_at")
+            })
+
+    res.sort(key=lambda x: x.get("created_at", ""))
+    return res
+
+@app.post("/messages")
+def send_message(payload: dict, user: dict = Depends(require_user)):
+    recipient_username = payload.get("recipient_username", "").strip()
+    text = payload.get("text", "")
+
+    db = get_db_client()
+    snaps = db.collection("users").where("username", "==", recipient_username).get()
+    if not snaps:
+        raise HTTPException(status_code=404, detail="Recipient user not found.")
+    recipient = snaps[0].to_dict()
+
+    msg_id = f"msg_{uuid.uuid4().hex[:10]}"
+    msg_data = {
+        "id": msg_id,
+        "sender_id": user["id"],
+        "recipient_id": recipient["id"],
+        "text": text,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    db.collection("messages").document(msg_id).set(msg_data)
+    
+    return {
+        "id": msg_id,
+        "sender_id": user["id"],
+        "recipient_id": recipient["id"],
+        "text": text,
+        "sender_username": user["username"],
+        "recipient_username": recipient["username"],
+        "created_at": msg_data["created_at"]
+    }
+
+@app.get("/explore")
+def explore_posts(query: Optional[str] = None):
+    db = get_db_client()
+    snaps = db.collection("posts").get()
+    
+    results = []
+    for s in snaps:
+        data = s.to_dict()
+        if data.get("status") != "rejected":
+            if not query or query.lower() in data.get("content", "").lower():
+                results.append(data)
+                
+    results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return results
+
+@app.get("/users")
+def list_users():
+    db = get_db_client()
+    snaps = db.collection("users").get()
+    return [s.to_dict() for s in snaps]
+
+
+# --- 12. RESET SYSTEM STATE ---
 
 @app.post("/reset")
-def reset_system(db: Session = Depends(get_db)):
-    """Utility endpoint to flush the database, user tables, and local file storage directories."""
-    # Delete database records
-    db.query(SocialPost).delete()
-    db.query(TrustedDocument).delete()
-    db.query(User).delete()
-    db.query(Follow).delete()
-    db.query(Comment).delete()
-    db.query(SavedPost).delete()
-    db.query(DirectMessage).delete()
-    db.commit()
-    
+def reset_system():
     # Clear local file directories
     for directory in [settings.TRUSTED_DOCS_DIR, settings.GENERATED_VIDEOS_DIR, settings.GENERATED_IMAGES_DIR]:
         if directory.exists():
             shutil.rmtree(directory)
         directory.mkdir(parents=True, exist_ok=True)
-        
-    return {"message": "System database, trusted files, static post images, and generated videos reset successfully."}
+
+    db = get_db_client()
+    
+    if hasattr(db, "db_path"):
+        # SQLite Mock client
+        import sqlite3
+        conn = sqlite3.connect(db.db_path)
+        c = conn.cursor()
+        c.execute("DELETE FROM collections")
+        conn.commit()
+        conn.close()
+    else:
+        # Real Cloud Firestore client
+        for col in ["users", "posts", "comments", "saves", "follows", "messages", "trusted_docs"]:
+            for doc in db.collection(col).stream():
+                doc.reference.delete()
+
+    invalidate_posts_cache()
+    return {"message": "System database reset successfully."}

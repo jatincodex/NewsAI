@@ -1,12 +1,11 @@
-import os
-import time
+import uuid
+import asyncio
 import random
 import logging
-import threading
 from datetime import datetime, timezone
-from app.database import SessionLocal
-from app.models import SocialPost, TrustedDocument
 from app.gemini_service import GeminiFactChecker
+from app.cache import invalidate_posts_cache
+from app.firebase_config import get_db_client
 
 logger = logging.getLogger(__name__)
 
@@ -53,74 +52,108 @@ VIRAL_CANDIDATES = [
     }
 ]
 
-class SocialMediaCrawlerAgent(threading.Thread):
-    def __init__(self, check_interval_seconds: int = 15):
-        super().__init__()
-        self.check_interval = check_interval_seconds
-        self.daemon = True
-        self.running = False
+# Track crawler cancellation / status
+crawler_running = False
 
-    def start_agent(self):
-        self.running = True
-        self.start()
-        logger.info("[SocialMediaCrawlerAgent] Background crawler thread started.")
 
-    def stop_agent(self):
-        self.running = False
-        logger.info("[SocialMediaCrawlerAgent] Background crawler thread stopping.")
+async def run_crawler_task(check_interval_seconds: int = 15):
+    """Async task loop that simulates discovering viral social media posts
+    and fact-checks them via Gemini, storing results in Firestore."""
+    global crawler_running
+    crawler_running = True
+    logger.info("[SocialMediaCrawlerAgent] Async crawler loop started.")
+    print("[SocialMediaCrawlerAgent] Async crawler loop started.", flush=True)
 
-    def run(self):
-        # Allow server to bind and start up
-        time.sleep(5)
-        
-        while self.running:
-            db = SessionLocal()
-            try:
-                # 1. Select a candidate
-                candidate = random.choice(VIRAL_CANDIDATES)
-                
-                # 2. Check if already ingested
-                existing = db.query(SocialPost).filter(SocialPost.post_id == candidate["post_id"]).first()
-                if not existing:
-                    msg = f"[SocialMediaCrawlerAgent] Discovered new viral post: {candidate['post_id']} by @{candidate['username']}"
-                    logger.info(msg)
-                    print(msg, flush=True)
-                    
-                    # 3. Pull trusted reference docs to construct prompt context
-                    docs = db.query(TrustedDocument).all()
-                    reference_context = ""
-                    if docs:
-                        reference_context = "\n".join([f"Document Title: {d.title}\nContent: {d.content}\n---" for d in docs])
-                    
-                    # 4. Invoke Gemini Fact Checking Agent
-                    fact_check_result = GeminiFactChecker.verify_claim(candidate["content"], reference_context)
-                    
-                    # 5. Insert published verified post into DB
-                    new_post = SocialPost(
-                        post_id=candidate["post_id"],
-                        source=candidate["source"],
-                        username=candidate["username"],
-                        content=candidate["content"],
-                        timestamp=datetime.now(timezone.utc).isoformat(),
-                        likes=candidate["likes"],
-                        retweets=candidate["retweets"],
-                        confidence_score=fact_check_result["accuracy_percentage"] / 100.0,
-                        accuracy_percentage=fact_check_result["accuracy_percentage"],
-                        fact_check_report=fact_check_result["analysis_report"],
-                        status="published"
-                    )
-                    db.add(new_post)
-                    db.commit()
-                    msg_success = f"[SocialMediaCrawlerAgent] Successfully fact checked and posted {candidate['post_id']}. Verdict: {fact_check_result['verdict']} ({fact_check_result['accuracy_percentage']}%)."
-                    logger.info(msg_success)
-                    print(msg_success, flush=True)
-                    
-            except Exception as e:
-                logger.error(f"[SocialMediaCrawlerAgent] Error in background execution loop: {e}")
-            finally:
-                db.close()
-                
-            time.sleep(self.check_interval)
+    # Allow application server to bind first
+    await asyncio.sleep(5)
 
-# Singleton Instance
-crawler_agent_instance = SocialMediaCrawlerAgent()
+    while crawler_running:
+        try:
+            db = get_db_client()
+
+            # 1. Choose a random candidate
+            candidate = random.choice(VIRAL_CANDIDATES)
+
+            # 2. Check if already ingested (Firestore document lookup)
+            existing_snap = db.collection("posts").document(candidate["post_id"]).get()
+            if not existing_snap.exists:
+                msg_discover = (
+                    f"[SocialMediaCrawlerAgent] Discovered new viral post: "
+                    f"{candidate['post_id']} by @{candidate['username']}"
+                )
+                logger.info(msg_discover)
+                print(msg_discover, flush=True)
+
+                # 3. Pull reference docs to construct context
+                doc_snaps = db.collection("trusted_docs").get()
+                reference_context = ""
+                if doc_snaps:
+                    reference_context = "\n".join([
+                        f"Document Title: {d.to_dict().get('title', '')}\n"
+                        f"Content: {d.to_dict().get('content', '')}\n---"
+                        for d in doc_snaps
+                    ])
+
+                # 4. Invoke Gemini fact-checker asynchronously
+                fact_check_result = await GeminiFactChecker.verify_claim(
+                    candidate["content"], reference_context
+                )
+
+                accuracy = fact_check_result["accuracy_percentage"]
+                confidence_score = accuracy / 100.0
+
+                # Determine status based on confidence score
+                if confidence_score >= 0.75:
+                    post_status = "published"
+                elif confidence_score <= 0.30:
+                    post_status = "rejected"
+                else:
+                    post_status = "human_review_required"
+
+                # 5. Insert post into Firestore
+                now = datetime.now(timezone.utc).isoformat()
+                post_doc = {
+                    "id": candidate["post_id"],
+                    "post_id": candidate["post_id"],
+                    "source": candidate["source"],
+                    "username": candidate["username"],
+                    "content": candidate["content"],
+                    "timestamp": candidate.get("timestamp", now),
+                    "likes": candidate["likes"],
+                    "retweets": candidate["retweets"],
+                    "confidence_score": confidence_score,
+                    "accuracy_percentage": accuracy,
+                    "fact_check_report": fact_check_result["analysis_report"],
+                    "status": post_status,
+                    "image_path": None,
+                    "video_path": None,
+                    "likes_count": 0,
+                    "created_at": now,
+                    "user_id": None,
+                }
+                db.collection("posts").document(candidate["post_id"]).set(post_doc)
+
+                # Invalidate posts cache so new items appear immediately
+                invalidate_posts_cache()
+
+                msg_success = (
+                    f"[SocialMediaCrawlerAgent] Successfully fact checked and posted "
+                    f"{candidate['post_id']}. Verdict: {fact_check_result['verdict']} "
+                    f"({accuracy}%)."
+                )
+                logger.info(msg_success)
+                print(msg_success, flush=True)
+
+        except asyncio.CancelledError:
+            logger.info("[SocialMediaCrawlerAgent] Async crawler loop task cancelled.")
+            break
+        except Exception as e:
+            logger.error(f"[SocialMediaCrawlerAgent] Error in async execution loop: {e}")
+
+        await asyncio.sleep(check_interval_seconds)
+
+
+def stop_crawler():
+    global crawler_running
+    crawler_running = False
+    logger.info("[SocialMediaCrawlerAgent] Async crawler task loop stopping flag set.")

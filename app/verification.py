@@ -81,31 +81,39 @@ class VerificationEngine:
         return chunks
 
     @classmethod
-    def verify_post(cls, db: Session, post_content: str) -> Tuple[float, Optional[int], Optional[str]]:
+    def verify_post(cls, db, post_content: str) -> Tuple[float, Optional[str], Optional[str]]:
         """
         Cross-references the post content against all trusted news documents in the database.
         Returns a tuple: (highest_confidence_score, matched_document_id, matched_snippet)
         """
-        trusted_docs = db.query(TrustedDocument).all()
-        if not trusted_docs:
+        if hasattr(db, "query"):
+            # SQLAlchemy Session
+            trusted_docs = db.query(TrustedDocument).all()
+            docs = [{"id": str(doc.id), "content": doc.content} for doc in trusted_docs]
+        else:
+            # Firestore Client
+            snaps = db.collection("trusted_docs").get()
+            docs = [{"id": snap.id, "content": snap.to_dict().get("content", "")} for snap in snaps]
+
+        if not docs:
             return 0.0, None, "No trusted documents in the database to verify against."
             
         best_score = 0.0
         best_doc_id = None
         best_snippet = None
         
-        for doc in trusted_docs:
+        for doc in docs:
             # Chunk the document to match locally against specific snippets (simulating vector retrieval)
-            chunks = cls._chunk_document(doc.content)
+            chunks = cls._chunk_document(doc["content"])
             
             # Also include the document as a whole
-            chunks.append(doc.content)
+            chunks.append(doc["content"])
             
             for chunk in chunks:
                 score = cls._calculate_cosine_similarity(post_content, chunk)
                 if score > best_score:
                     best_score = score
-                    best_doc_id = doc.id
+                    best_doc_id = doc["id"]
                     # Keep a snippet of up to 150 characters
                     best_snippet = chunk[:150] + "..." if len(chunk) > 150 else chunk
                     

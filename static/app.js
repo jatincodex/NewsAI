@@ -1,13 +1,36 @@
 // Global Application State
-let currentUser = {
-    username: "admin",
-    display_name: "Admin Moderator",
-    avatar_index: 1,
-    bio: "Main system administrator bypass session."
-};
+let currentUser = null;
 let activeView = 'home';
-let token = "dummy_token";
-function setSessionToken(t) {}
+let token = null;
+
+try {
+    token = localStorage.getItem("news_ai_token");
+    if (localStorage.getItem("news_ai_user")) {
+        currentUser = JSON.parse(localStorage.getItem("news_ai_user"));
+    }
+} catch (e) {
+    console.error("Local storage read blocked:", e);
+}
+
+function setSessionToken(t, user = null) {
+    token = t;
+    currentUser = user;
+    try {
+        if (t) {
+            localStorage.setItem("news_ai_token", t);
+            if (user) {
+                localStorage.setItem("news_ai_user", JSON.stringify(user));
+            }
+        } else {
+            localStorage.removeItem("news_ai_token");
+            localStorage.removeItem("news_ai_user");
+        }
+    } catch (e) {
+        console.error("Local storage write blocked:", e);
+    }
+    setupUserFooter();
+}
+
 let activeChatRecipient = null;
 let followingList = [];
 let chatLogsInterval = null;
@@ -65,6 +88,13 @@ function getHeaders() {
     return headers;
 }
 
+const API_BASE = window.location.protocol.startsWith('http') ? '' : 'http://127.0.0.1:8081';
+function apiFetch(path, options = {}) {
+    return fetch(`${API_BASE}${path}`, options);
+}
+
+console.log('NewsAI frontend auth script loaded; API_BASE=', API_BASE);
+
 // Check Authentication Session
 async function checkAuth() {
     if (!token) {
@@ -72,7 +102,7 @@ async function checkAuth() {
         return;
     }
     try {
-        const response = await fetch('/auth/me', { headers: getHeaders() });
+        const response = await apiFetch('/auth/me', { headers: getHeaders() });
         if (response.ok) {
             currentUser = await response.json();
             showAuthModal(false);
@@ -93,9 +123,13 @@ async function checkAuth() {
 function showAuthModal(show) {
     const modal = document.getElementById('auth-modal');
     if (show) {
-        modal.classList.add('active');
+        modal.style.display = 'flex';
+        // Small delay so display:flex renders before opacity transition
+        requestAnimationFrame(() => modal.classList.add('active'));
     } else {
         modal.classList.remove('active');
+        // Hide completely after CSS transition ends (300ms)
+        setTimeout(() => { modal.style.display = 'none'; }, 320);
     }
 }
 
@@ -1265,51 +1299,65 @@ document.getElementById('toggle-to-login').addEventListener('click', () => {
 
 // Google Auth modal toggle handlers
 const googleModal = document.getElementById('google-modal');
-document.getElementById('btn-google-login').addEventListener('click', (e) => {
-    e.preventDefault();
-    googleModal.classList.add('active');
-});
-document.getElementById('btn-google-signup').addEventListener('click', (e) => {
-    e.preventDefault();
-    googleModal.classList.add('active');
-});
-document.getElementById('btn-google-cancel').addEventListener('click', (e) => {
-    e.preventDefault();
-    googleModal.classList.remove('active');
-    document.getElementById('form-google-signin').reset();
-});
+const googleLoginButton = document.getElementById('btn-google-login');
+const googleSignupButton = document.getElementById('btn-google-signup');
+const googleCancelButton = document.getElementById('btn-google-cancel');
+const googleSignInForm = document.getElementById('form-google-signin');
 
-// Google Sign-In Submit Flow
-document.getElementById('form-google-signin').addEventListener('submit', async (e) => {
+function openGoogleModal(e) {
     e.preventDefault();
-    const email = document.getElementById('google-email').value.trim();
-    const displayName = document.getElementById('google-name').value.trim();
-    
-    if (!email.toLowerCase().endsWith("@gmail.com")) {
-        alert("Google Sign-In is restricted to valid @gmail.com accounts only.");
-        return;
+    if (googleModal) {
+        googleModal.classList.add('active');
     }
-    
-    try {
-        const response = await fetch('/auth/google', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, display_name: displayName })
-        });
-        if (response.ok) {
-            const data = await response.json();
-            setSessionToken(data.token);
-            document.getElementById('form-google-signin').reset();
-            googleModal.classList.remove('active');
-            await checkAuth();
-        } else {
-            const err = await response.json();
-            alert("Google Sign-In failed: " + (err.detail || "Authentication error"));
+}
+
+if (googleLoginButton) googleLoginButton.addEventListener('click', openGoogleModal);
+if (googleSignupButton) googleSignupButton.addEventListener('click', openGoogleModal);
+if (googleCancelButton) {
+    googleCancelButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        googleModal?.classList.remove('active');
+        googleSignInForm?.reset();
+    });
+}
+
+if (googleSignInForm) {
+    googleSignInForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const emailInput = document.getElementById('google-email');
+        const displayNameInput = document.getElementById('google-name');
+        const email = emailInput?.value.trim() || '';
+        const displayName = displayNameInput?.value.trim() || '';
+
+        if (!email.toLowerCase().endsWith('@gmail.com')) {
+            alert('Google Sign-In is restricted to valid @gmail.com accounts only.');
+            return;
         }
-    } catch {
-        alert("Network error.");
-    }
-});
+
+        try {
+            const response = await apiFetch('/auth/google', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email.toLowerCase(), display_name: displayName })
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                alert('Google Sign-In failed: ' + (err.detail || 'Authentication error'));
+                return;
+            }
+
+            const data = await response.json();
+            setSessionToken(data.token, data.user);
+            googleSignInForm.reset();
+            googleModal?.classList.remove('active');
+            await checkAuth();
+        } catch (err) {
+            console.error('Google Sign-In request failed:', err);
+            alert('Network error. Please try again.');
+        }
+    });
+}
 
 // Login Form Submit Action
 document.getElementById('form-login').addEventListener('submit', async (e) => {
@@ -1318,14 +1366,14 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
     const password = document.getElementById('login-password').value;
     
     try {
-        const response = await fetch('/auth/login', {
+        const response = await apiFetch('/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username_or_email: username, password })
         });
         if (response.ok) {
             const data = await response.json();
-            setSessionToken(data.token);
+            setSessionToken(data.token, data.user);
             document.getElementById('form-login').reset();
             await checkAuth();
         } else {
@@ -1351,14 +1399,14 @@ document.getElementById('form-signup').addEventListener('submit', async (e) => {
     }
     
     try {
-        const response = await fetch('/auth/signup', {
+        const response = await apiFetch('/auth/signup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, email, password, display_name: displayName })
         });
         if (response.ok) {
             const data = await response.json();
-            setSessionToken(data.token);
+            setSessionToken(data.token, data.user);
             document.getElementById('form-signup').reset();
             await checkAuth();
         } else {
@@ -1413,7 +1461,7 @@ formForgotRequest.addEventListener('submit', async (e) => {
     if (!email) return;
 
     try {
-        const response = await fetch('/auth/forgot-password', {
+        const response = await apiFetch('/auth/forgot-password', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: email })
@@ -1421,16 +1469,21 @@ formForgotRequest.addEventListener('submit', async (e) => {
 
         if (response.ok) {
             const data = await response.json();
+            const resetCode = data.reset_code || data.resetCode || '';
             // Autofill email for confirmation step
             document.getElementById('reset-email').value = email;
             
             // Toggle forms
             formForgotRequest.classList.add('hidden');
             formForgotReset.classList.remove('hidden');
-            forgotSubtitle.textContent = "Check your server terminal logs for the 6-digit PIN!";
+            if (resetCode) {
+                forgotSubtitle.textContent = `Your reset PIN is ${resetCode}. Enter it below to continue.`;
+            } else {
+                forgotSubtitle.textContent = "A reset PIN has been generated. Enter it below to continue.";
+            }
             
-            // Alert user of mock PIN print out
-            alert(`Reset PIN successfully generated!\n\nFor local security, it has been printed to the server terminal. Please copy it from the terminal logs.`);
+            // Inform the user the PIN is ready
+            alert(`Reset PIN successfully generated!${resetCode ? `\n\nYour PIN: ${resetCode}` : ''}`);
         } else {
             const err = await response.json();
             alert("Error: " + (err.detail || "Email address not found."));
@@ -1448,12 +1501,12 @@ formForgotReset.addEventListener('submit', async (e) => {
     const newPassword = document.getElementById('reset-new-password').value;
 
     try {
-        const response = await fetch('/auth/reset-password', {
+        const response = await apiFetch('/auth/reset-password', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 email: email,
-                reset_code: code,
+                code: code,
                 new_password: newPassword
             })
         });

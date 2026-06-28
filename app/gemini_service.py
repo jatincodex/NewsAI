@@ -1,26 +1,31 @@
 import os
 import json
 import logging
-import requests
+import httpx
 from app.config import settings
+from app.cache import get_cached_fact_check, set_cached_fact_check
 
 logger = logging.getLogger(__name__)
 
 class GeminiFactChecker:
     @staticmethod
-    def verify_claim(claim_content: str, reference_context: str = "") -> dict:
+    async def verify_claim(claim_content: str, reference_context: str = "") -> dict:
         """
-        Invokes Gemini 2.5 Flash to fact check a claim.
-        Returns a dict: {
-            "accuracy_percentage": float,
-            "verdict": str,
-            "analysis_report": str (Markdown)
-        }
+        Invokes Gemini 2.5 Flash asynchronously to fact check a claim.
+        Utilizes Redis caching to prevent redundant LLM invocations.
         """
+        # 1. Check Redis Cache
+        cached = get_cached_fact_check(claim_content)
+        if cached:
+            return cached
+
+        # 2. Key Check & Mock Fallback
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             logger.info("GEMINI_API_KEY environment variable not set. Using local mock AI fact checker.")
-            return GeminiFactChecker._mock_verify_claim(claim_content, reference_context)
+            result = GeminiFactChecker._mock_verify_claim(claim_content, reference_context)
+            set_cached_fact_check(claim_content, result)
+            return result
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
         
@@ -53,18 +58,23 @@ class GeminiFactChecker:
         }
 
         try:
-            response = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
-            if response.status_code == 200:
-                res_data = response.json()
-                text_response = res_data["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text_response.strip())
-            else:
-                logger.error(f"Gemini API returned error code {response.status_code}: {response.text}")
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+                if response.status_code == 200:
+                    res_data = response.json()
+                    text_response = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                    result = json.loads(text_response.strip())
+                    set_cached_fact_check(claim_content, result)
+                    return result
+                else:
+                    logger.error(f"Gemini API returned error code {response.status_code}: {response.text}")
         except Exception as e:
             logger.exception(f"Exception during Gemini API request: {e}")
 
         logger.warning("Gemini API call failed. Falling back to local mock AI fact checker.")
-        return GeminiFactChecker._mock_verify_claim(claim_content, reference_context)
+        result = GeminiFactChecker._mock_verify_claim(claim_content, reference_context)
+        set_cached_fact_check(claim_content, result)
+        return result
 
     @staticmethod
     def _mock_verify_claim(claim_content: str, reference_context: str = "") -> dict:
@@ -72,7 +82,7 @@ class GeminiFactChecker:
         claim_lower = claim_content.lower()
         
         # Default mock responses based on claim keywords
-        if "solar flare" in claim_lower or "blackout" in claim_lower:
+        if "solar storm" in claim_lower or "blackout" in claim_lower or "solar flare" in claim_lower:
             accuracy = 95.0
             verdict = "Mostly Correct"
             report = (
@@ -100,16 +110,16 @@ class GeminiFactChecker:
                 "- **Medical consensus:** Celery has hydration and antioxidant benefits, but it does not reverse insulin resistance.\n"
                 "- **Evidence Source:** World Health Organization / American Diabetes Association guidelines."
             )
-        elif "moon mission" in claim_lower or "artemis" in claim_lower:
+        elif "moon mission" in claim_lower or "artemis" in claim_lower or "kepler" in claim_lower:
             accuracy = 100.0
             verdict = "Verified Fact"
             report = (
-                "# 🛡️ AI Verification Report: NASA Artemis Moon Mission\n\n"
+                "# 🛡️ AI Verification Report: space Science Update\n\n"
                 "### Verdict: Fully Verified (100% Accuracy)\n\n"
                 "**Analysis Summary:**\n"
-                "NASA's schedule for landing astronauts near the lunar south pole has been officially announced and funded.\n\n"
+                "NASA's schedule for planetary discoveries and lunar exploration updates has been officially announced.\n\n"
                 "**Key Findings:**\n"
-                "- **Evidence Source:** NASA Artemis Program schedule updates."
+                "- **Evidence Source:** NASA Kepler/Artemis Science updates."
             )
         else:
             # General fallback evaluation

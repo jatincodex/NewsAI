@@ -2,23 +2,42 @@
 __pycache__/
 *.py[cod]
 *.pyo
-.pytest_cache/
+*.pyc
+*$py.class
 
-# Database files (auto-created on server startup)
+# Virtual environments
+venv/
+env/
+.venv/
+.env
+
+# Local SQLite / mock databases
 *.db
+*.sqlite3
 
-# Generated media (too large for GitHub)
+# Generated media files (don't commit these — regenerated on server)
 data/generated_videos/
 data/generated_images/
-data/
 
-# Environment
-.env
-*.env
+# Logs
+*.log
+logs/
 
-# IDE
+# Pytest / test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE files
 .vscode/
 .idea/
+*.swp
 
-# Gemini AI config
-.gemini/
+# Firebase service account key (NEVER commit this)
+firebase-service-account.json
+serviceAccountKey.json
+*-firebase-adminsdk-*.json
+
+# OS files
+.DS_Store
+Thumbs.db
