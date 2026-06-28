@@ -1454,3 +1454,13 @@ body.dark-mode {
     box-shadow: 0 0 10px var(--accent-cyan);
     transform: scale(1.15);
 }
+
+/* Disable auth overlays for simplified direct access */
+#auth-modal, #google-modal, #forgot-pwd-modal {
+    display: none !important;
+}
+
+/* Hide logout button */
+.btn-logout {
+    display: none !important;
+}

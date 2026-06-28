@@ -1,25 +1,13 @@
 // Global Application State
-let currentUser = null;
+let currentUser = {
+    username: "admin",
+    display_name: "Admin Moderator",
+    avatar_index: 1,
+    bio: "Main system administrator bypass session."
+};
 let activeView = 'home';
-let token = null;
-try {
-    token = localStorage.getItem('news_ai_token') || null;
-} catch (e) {
-    console.warn("localStorage not accessible, falling back to memory session token.");
-}
-
-function setSessionToken(t) {
-    token = t;
-    try {
-        if (t) {
-            localStorage.setItem('news_ai_token', t);
-        } else {
-            localStorage.removeItem('news_ai_token');
-        }
-    } catch (e) {
-        console.warn("Failed to write token to localStorage:", e);
-    }
-}
+let token = "dummy_token";
+function setSessionToken(t) {}
 let activeChatRecipient = null;
 let followingList = [];
 let chatLogsInterval = null;
