@@ -131,3 +131,14 @@ class MessageResponse(BaseModel):
 class UserGoogleLogin(BaseModel):
     email: str = Field(..., min_length=5)
     display_name: Optional[str] = None
+
+
+# --- PASSWORD RESET SCHEMAS ---
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=5)
+
+class ResetPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=5)
+    reset_code: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=4)

@@ -1347,6 +1347,98 @@ document.getElementById('btn-logout').addEventListener('click', (e) => {
 });
 
 
+// --- 17. OVERLAY: FORGOT PASSWORD MODAL ---
+const forgotPwdModal = document.getElementById('forgot-pwd-modal');
+const formForgotRequest = document.getElementById('form-forgot-request');
+const formForgotReset = document.getElementById('form-forgot-reset');
+const forgotSubtitle = document.getElementById('forgot-pwd-subtitle');
+
+// Show modal
+document.getElementById('btn-forgot-pwd').addEventListener('click', (e) => {
+    e.preventDefault();
+    forgotPwdModal.classList.add('active');
+    formForgotRequest.classList.remove('hidden');
+    formForgotReset.classList.add('hidden');
+    forgotSubtitle.textContent = "Enter your email to receive a password reset PIN";
+});
+
+// Hide modal on Cancel clicks
+document.querySelectorAll('.btn-forgot-cancel').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        forgotPwdModal.classList.remove('active');
+        formForgotRequest.reset();
+        formForgotReset.reset();
+    });
+});
+
+// Step 1: Submit Reset Request (Generate PIN)
+formForgotRequest.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('forgot-email').value.trim();
+    if (!email) return;
+
+    try {
+        const response = await fetch('/auth/forgot-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            // Autofill email for confirmation step
+            document.getElementById('reset-email').value = email;
+            
+            // Toggle forms
+            formForgotRequest.classList.add('hidden');
+            formForgotReset.classList.remove('hidden');
+            forgotSubtitle.textContent = "Check your server terminal logs for the 6-digit PIN!";
+            
+            // Alert user of mock PIN print out
+            alert(`Reset PIN successfully generated!\n\nFor local security, it has been printed to the server terminal. Please copy it from the terminal logs.`);
+        } else {
+            const err = await response.json();
+            alert("Error: " + (err.detail || "Email address not found."));
+        }
+    } catch {
+        alert("Network error.");
+    }
+});
+
+// Step 2: Submit Reset Password Form
+formForgotReset.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('reset-email').value.trim();
+    const code = document.getElementById('reset-pin').value.trim();
+    const newPassword = document.getElementById('reset-new-password').value;
+
+    try {
+        const response = await fetch('/auth/reset-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: email,
+                reset_code: code,
+                new_password: newPassword
+            })
+        });
+
+        if (response.ok) {
+            alert("Password updated successfully! You can now log in with your new credentials.");
+            forgotPwdModal.classList.remove('active');
+            formForgotRequest.reset();
+            formForgotReset.reset();
+        } else {
+            const err = await response.json();
+            alert("Reset failed: " + (err.detail || "Invalid or expired PIN."));
+        }
+    } catch {
+        alert("Network error.");
+    }
+});
+
+
 // --- INITIAL STARTUP HANDLER ---
 window.addEventListener('DOMContentLoaded', () => {
     // Generate initial random Post ID for preset testing

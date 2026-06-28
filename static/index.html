@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NewsAI - Verified Social Feed</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=1.0.1">
     <!-- Google Fonts for premium typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -376,6 +376,9 @@
                     <label for="login-password">Password</label>
                     <input type="password" id="login-password" required placeholder="Enter password">
                 </div>
+                <p class="auth-toggle-msg" style="margin-top: -6px; margin-bottom: 12px; text-align: right; font-size: 11px; cursor: pointer;">
+                    <span id="btn-forgot-pwd" style="color: var(--accent-cyan); font-weight: 500;">Forgot Password?</span>
+                </p>
                 <button type="submit" class="btn btn-glow btn-block">Log In</button>
                 <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin: 12px 0; color: var(--text-muted); font-size: 11px;">
                     <hr style="flex: 1; border: none; border-top: 1px solid var(--border-glass)"> OR <hr style="flex: 1; border: none; border-top: 1px solid var(--border-glass)">
@@ -455,6 +458,52 @@
                     Continue
                 </button>
                 <button type="button" class="btn btn-block" id="btn-google-cancel" style="margin-top: 8px; font-size:11px; padding: 6px; background: transparent; border-color: var(--border-glass);">
+                    Cancel
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- OVERLAY: PASSWORD RESET MODAL -->
+    <div id="forgot-pwd-modal" class="modal-overlay">
+        <div class="card" style="width: 100%; max-width: 365px; padding: 25px; box-shadow: 0 0 40px rgba(0, 240, 255, 0.2);">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h3 style="font-family: var(--font-heading); font-size: 18px; font-weight: 700; margin-bottom: 4px;">Reset Password</h3>
+                <p id="forgot-pwd-subtitle" style="font-size: 11px; color: var(--text-secondary);">Enter your email to receive a password reset PIN</p>
+            </div>
+            
+            <!-- Step 1 Form: Request PIN -->
+            <form id="form-forgot-request">
+                <div class="input-group">
+                    <label for="forgot-email">Gmail Address</label>
+                    <input type="email" id="forgot-email" required placeholder="Enter registered @gmail.com email">
+                </div>
+                <button type="submit" class="btn btn-block btn-glow">
+                    Send Reset PIN
+                </button>
+                <button type="button" class="btn btn-block btn-forgot-cancel" style="margin-top: 8px; font-size:11px; padding: 6px; background: transparent; border-color: var(--border-glass);">
+                    Cancel
+                </button>
+            </form>
+
+            <!-- Step 2 Form: Enter PIN and Reset (Hidden by default) -->
+            <form id="form-forgot-reset" class="hidden">
+                <div class="input-group">
+                    <label for="reset-email">Confirm Gmail Address</label>
+                    <input type="email" id="reset-email" required readonly placeholder="Confirm email">
+                </div>
+                <div class="input-group">
+                    <label for="reset-pin">6-Digit Reset PIN</label>
+                    <input type="text" id="reset-pin" required pattern="\d{6}" maxlength="6" placeholder="Enter 6-digit PIN">
+                </div>
+                <div class="input-group">
+                    <label for="reset-new-password">New Password</label>
+                    <input type="password" id="reset-new-password" required placeholder="Choose a new password">
+                </div>
+                <button type="submit" class="btn btn-block btn-glow" style="background: linear-gradient(135deg, var(--accent-cyan) 0%, #0072FF 100%);">
+                    Update Password
+                </button>
+                <button type="button" class="btn btn-block btn-forgot-cancel" style="margin-top: 8px; font-size:11px; padding: 6px; background: transparent; border-color: var(--border-glass);">
                     Cancel
                 </button>
             </form>
@@ -557,6 +606,6 @@
     </div>
 
     <!-- Frontend controller script -->
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=1.0.1"></script>
 </body>
 </html>

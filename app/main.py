@@ -1,5 +1,6 @@
 import os
 import uuid
+import random
 import shutil
 from typing import List, Optional
 from datetime import datetime, timezone
@@ -28,7 +29,9 @@ from app.schemas import (
     CommentResponse,
     MessageCreate,
     MessageResponse,
-    UserGoogleLogin
+    UserGoogleLogin,
+    ForgotPasswordRequest,
+    ResetPasswordRequest
 )
 from app.tasks import process_social_post, generate_video_task
 
@@ -180,6 +183,67 @@ def google_auth(payload: UserGoogleLogin, db: Session = Depends(get_db)):
         
     token = AuthHandler.generate_token(user.id, user.username)
     return {"token": token, "user": UserResponse.model_validate(user)}
+
+@app.post("/auth/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email_clean = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == email_clean).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email address not found."
+        )
+    
+    # Generate 6-digit reset code
+    code = f"{random.randint(100000, 999999)}"
+    user.reset_code = code
+    # Set expiration to 15 minutes
+    from datetime import timedelta
+    user.reset_code_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+    db.commit()
+    
+    # Print reset code to terminal for easy retrieval during local testing
+    print(f"\n=====================================")
+    print(f"PASSWORD RESET REQUEST")
+    print(f"Email: {email_clean}")
+    print(f"Reset Code: {code}")
+    print(f"=====================================\n")
+    
+    return {"message": "Reset code successfully generated.", "reset_code": code}
+
+@app.post("/auth/reset-password")
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    email_clean = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == email_clean).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email address not found."
+        )
+        
+    if not user.reset_code or user.reset_code != payload.reset_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid password reset code."
+        )
+        
+    expires = user.reset_code_expires
+    if expires:
+        now_val = datetime.now(timezone.utc) if expires.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
+        if now_val > expires:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password reset code has expired."
+            )
+            
+    # Reset password
+    hashed = AuthHandler.hash_password(payload.new_password)
+    user.hashed_password = hashed
+    user.reset_code = None
+    user.reset_code_expires = None
+    db.commit()
+    
+    return {"message": "Password reset successfully."}
 
 @app.get("/auth/me", response_model=UserResponse)
 def get_me(user: User = Depends(require_user)):

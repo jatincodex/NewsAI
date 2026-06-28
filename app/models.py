@@ -13,6 +13,8 @@ class User(Base):
     display_name = Column(String(100), nullable=True)
     bio = Column(Text, nullable=True)
     avatar_index = Column(Integer, default=1)  # Local default avatar choice (1-8)
+    reset_code = Column(String(10), nullable=True)
+    reset_code_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
     # Relationships
