@@ -1,0 +1,161 @@
+{
+  "app_name": "NewsAI",
+  "personality": "5 Brutalist Mobile LIGHT",
+  "personality_one_liner": "A high-density, authoritative intelligence dashboard built like an operational command center.",
+  "color": {
+    "surface": "#FAFAFA",
+    "onSurface": "#111111",
+    "surfaceSecondary": "#F0F0F0",
+    "onSurfaceSecondary": "#111111",
+    "surfaceTertiary": "#E4E4E4",
+    "onSurfaceTertiary": "#333333",
+    "surfaceInverse": "#111111",
+    "onSurfaceInverse": "#FAFAFA",
+    "brand": "#111111",
+    "brandPrimary": "#111111",
+    "onBrandPrimary": "#FAFAFA",
+    "brandSecondary": "#333333",
+    "onBrandSecondary": "#FAFAFA",
+    "brandTertiary": "#E4E4E4",
+    "onBrandTertiary": "#111111",
+    "success": "#059669",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D97706",
+    "onWarning": "#FFFFFF",
+    "error": "#DC2626",
+    "onError": "#FFFFFF",
+    "info": "#2563EB",
+    "onInfo": "#FFFFFF",
+    "border": "#111111",
+    "borderStrong": "#111111",
+    "divider": "#E4E4E4"
+  },
+  "typography": {
+    "displayFontFamily": "SpaceGrotesk",
+    "textFontFamily": "SpaceGrotesk",
+    "monoFontFamily": "SpaceMono",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use rigid grids, hard alignment, visible spacing systems instead of soft cards. Intentional whitespace imbalance.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 0,
+    "md": 0,
+    "lg": 0,
+    "pill": 0
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": "false",
+    "do's": [],
+    "dont's": [
+      "No blur or glassmorphism. This is a brutalist app. Use stark contrasts and borders."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "none",
+      "android": "none",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "none",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Live Viral Claims Feed",
+      "purpose": "A real-time ticker and list of incoming social posts needing fact-checking, heavily stylized like a command center.",
+      "states": {
+        "loading": "Skeleton loaders matching the rigid grid layout, monochromatic.",
+        "empty": "A mono-spaced 'NO DATA STREAM' alert over a stark background with a manual refresh CTA.",
+        "error": "Hard red error box with a bold 'CONNECTION FAILED' message and a sharp retry button."
+      },
+      "layout": "Streamlined vertical list layout with high info density. Top of screen contains a heavy, bordered Stats Overview block (Total, Verified, Debunked). Each post is a sharp-edged card with a 2pt borderStrong outline. Display platform badges (X, Instagram, TikTok), content snippet, mono timestamp, and a status chip. Use pull-to-refresh for real-time updates."
+    },
+    {
+      "name": "Verified/Debunked Dashboard",
+      "purpose": "A grid-based archive displaying fact-checked posts with definitive visual verdicts and reel previews.",
+      "states": {
+        "loading": "Centralized spinner and grid skeleton.",
+        "empty": "An empty state showing an abstract newsroom illustration with 'NO VERIFIED CLAIMS' text.",
+        "error": "Bold error banner."
+      },
+      "layout": "Stacked grid view. Cards showing fact-checked posts with a thick progress bar or gauge for the confidence score (Red for <0.5, Amber for 0.5-0.95, Green for >=0.95). Verdict banner, logic breakdown text, source citations. A large section dedicated to the generated 9:16 reel preview (using the newsroom placeholder image)."
+    },
+    {
+      "name": "Admin Queue",
+      "purpose": "Moderation list for borderline posts (Score < 0.95) needing human review, focused on operational speed.",
+      "states": {
+        "loading": "List skeletons.",
+        "empty": "Large mono text 'QUEUE CLEAR. NO HUMAN REVIEW REQUIRED.'",
+        "error": "Error block with retry action."
+      },
+      "layout": "Minimal card layout with content cards. Each card displays the confidence score prominently, raw payload inspector shown in a mono-font block (SpaceMono), and hard-edged Approve (Green) / Reject (Red) buttons at the bottom. The layout must feel mechanical, utilizing thick structural borders and exposed system states."
+    },
+    {
+      "name": "Post Detail View",
+      "purpose": "Deep dive into a specific post's fact-check logic and generation status.",
+      "states": {
+        "loading": "Skeleton UI blocks for each section.",
+        "empty": "N/A",
+        "error": "Error loading details."
+      },
+      "layout": "Full screen modal or stack screen. Oversized typography for the claim text. Split panels: AI logic breakdown on one side, confidence score (huge font) on the other. Render job status (queued, rendering, completed) displayed as a step-by-step progress tracker."
+    }
+  ],
+  "images": {
+    "x_logo": {
+      "url": "https://images.unsplash.com/photo-1705904506582-6552c35a2dc4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwxfHx4JTIwdHdpdHRlciUyMGxvZ28lMjB0cmFuc3BhcmVudCUyMHBuZ3xlbnwwfHx8fDE3ODI2ODMyMjZ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "X (Twitter) Badge"
+    },
+    "instagram_logo": {
+      "url": "https://images.unsplash.com/photo-1611262588024-d12430b98920?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzl8MHwxfHNlYXJjaHwxfHxpbnN0YWdyYW0lMjBsb2dvJTIwdHJhbnNwYXJlbnQlMjBwbmd8ZW58MHx8fHwxNzgyNjgzMjI3fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Instagram Badge"
+    },
+    "tiktok_logo": {
+      "url": "https://images.unsplash.com/photo-1678329887268-586b9464e207?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwxfHx0aWt0b2slMjBsb2dvJTIwdHJhbnNwYXJlbnQlMjBwbmd8ZW58MHx8fHwxNzgyNjgzMjI2fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "TikTok Badge"
+    },
+    "reel_preview_placeholder": {
+      "url": "https://images.unsplash.com/photo-1742805382148-48e9953ad797?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwxfHxuZXdzJTIwc3R1ZGlvJTIwYWJzdHJhY3R8ZW58MHx8fHwxNzgyMzM2OTAwfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Empty modern newsroom studio background for Reel previews"
+    }
+  },
+  "haptics": {
+    "events": {
+      "pull_to_refresh": "impactLight",
+      "approve_claim": "notificationSuccess",
+      "reject_claim": "notificationError",
+      "tab_change": "selection",
+      "tap_card": "impactLight"
+    }
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: The design language is strictly Brutalist Mobile LIGHT. No rounded corners (radius 0 everywhere), no drop shadows, no glassmorphism, no blurs.",
+    "Borders are your primary layout tool. Use 'borderStrong' (#111111) for 2pt sharp outlines on cards and structural sections.",
+    "Use 'SpaceMono' for all timestamps, raw payload blocks, and stats indicators to enforce the intelligence command-center vibe.",
+    "Confidence Scores are critical to the UX: <0.5 is Red (Error), 0.5-0.95 is Amber (Warning), >=0.95 is Green (Success). Do NOT use any color other than these semantic colors and the monochrome palette.",
+    "Social badges (X, Insta, TikTok) can use Expo Vector Icons (Ionicons/FontAwesome) as primary since the image search returned phone mockups, but use the provided image URLs as fallback graphics where appropriate. Explicitly style X as black, Insta as pink-gradient (if possible via Expo LinearGradient or just solid pink), TikTok as cyan/black.",
+    "Ensure 'Live Viral Claims Feed' has a top sticky section for total stats.",
+    "The 'raw payload inspector' in the Admin Queue must look like a raw JSON code block with mono typography."
+  ]
+}
