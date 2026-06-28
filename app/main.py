@@ -43,6 +43,16 @@ app = FastAPI(
     description="Instagram-style news container platform with verification and reels synthesis."
 )
 
+from app.crawler_agent import crawler_agent_instance
+
+@app.on_event("startup")
+def startup_event():
+    crawler_agent_instance.start_agent()
+
+@app.on_event("shutdown")
+def shutdown_event():
+    crawler_agent_instance.stop_agent()
+
 # Mount static folder for assets
 app.mount("/static", StaticFiles(directory=str(settings.BASE_DIR / "static")), name="static")
 

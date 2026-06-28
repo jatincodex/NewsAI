@@ -10,5 +10,5 @@ if __name__ == "__main__":
     print("Starting NewsAI Platform on http://127.0.0.1:8081")
     print("=============================================\n")
     
-    # Run the application server
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8081, reload=True)
+    # Run the application server with reload=False for instant startup
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8081, reload=False)

@@ -95,6 +95,8 @@ class SocialPost(Base):
     
     # Verification stats
     confidence_score = Column(Float, default=0.0)
+    accuracy_percentage = Column(Float, nullable=True)
+    fact_check_report = Column(Text, nullable=True)
     status = Column(String(50), default="pending")  # "pending", "processing", "video_generation_pending", "human_review_required", "published", "rejected"
     
     # Link to trusted document matched

@@ -45,6 +45,17 @@ function formatDate(isoString) {
     }
 }
 
+// Helper: Format basic Markdown elements to HTML
+function formatMarkdown(text) {
+    if (!text) return "";
+    return text
+        .replace(/^# (.*$)/gim, '<h2 style="font-family: var(--font-heading); font-size: 16px; font-weight: 700; margin-top: 15px; margin-bottom: 8px; color: var(--accent-cyan);">$1</h2>')
+        .replace(/^### (.*$)/gim, '<h3 style="font-family: var(--font-heading); font-size: 13px; font-weight: 600; margin-top: 12px; margin-bottom: 4px; color: #fff;">$1</h3>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/- (.*$)/gim, '<li style="margin-left: 15px; margin-bottom: 4px; color: var(--text-secondary);">$1</li>')
+        .replace(/\n/g, '<br>');
+}
+
 // Request Headers Builder
 function getHeaders() {
     const headers = { 'Content-Type': 'application/json' };
@@ -189,6 +200,7 @@ async function loadHomeFeed() {
                         <span class="badge published">Verified</span>
                     </div>
                     
+                    ${post.image_path ? `
                     <div class="feed-item-media">
                         <img src="/posts/${post.post_id}/image" alt="News Image Card">
                         <div class="media-play-overlay" onclick="openReelPlayer('${post.post_id}', '${post.username}', '${post.content.replace(/'/g, "\\'")}', ${post.likes_count})">
@@ -197,6 +209,12 @@ async function loadHomeFeed() {
                             </div>
                         </div>
                     </div>
+                    ` : `
+                    <div class="feed-item-media text-card-media" style="background: linear-gradient(135deg, #181528 0%, #110d21 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 25px; text-align: center; border-radius: 8px; border: 1px solid var(--border-glass); min-height: 150px; cursor: pointer;" onclick="openPostDetailModal('${post.post_id}')">
+                        <span class="text-card-source" style="color: var(--accent-cyan); font-size: 11px; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 2px;">📢 ${post.source} ALERT</span>
+                        <p class="text-card-content" style="color: #fff; font-size: 15px; font-weight: 600; line-height: 1.4; font-family: var(--font-heading);">${post.content}</p>
+                    </div>
+                    `}
                     
                     <div class="feed-item-actions-bar">
                         <button class="action-icon-btn" onclick="toggleLike('${post.post_id}', this)">
@@ -209,9 +227,15 @@ async function loadHomeFeed() {
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
                         </button>
                         
-                        <button class="action-icon-btn fact-check-badge" title="Verification detail metrics">
-                            🛡 ${scorePercent} Match
+                        ${post.accuracy_percentage !== null ? `
+                        <button class="action-icon-btn fact-check-badge" onclick="openPostDetailModal('${post.post_id}')" style="color: ${post.accuracy_percentage >= 80 ? '#00f0ff' : (post.accuracy_percentage >= 50 ? '#ffb700' : '#ff4747')}; border-color: ${post.accuracy_percentage >= 80 ? '#00f0ff' : (post.accuracy_percentage >= 50 ? '#ffb700' : '#ff4747')}40; background: ${post.accuracy_percentage >= 80 ? '#00f0ff' : (post.accuracy_percentage >= 50 ? '#ffb700' : '#ff4747')}10; font-weight: 700; cursor: pointer;" title="Click to view AI Fact-Checking Report">
+                            🛡️ AI Checked: ${post.accuracy_percentage}% Accuracy
                         </button>
+                        ` : `
+                        <button class="action-icon-btn fact-check-badge" title="Verification detail metrics">
+                            🛡️ Match: ${scorePercent}
+                        </button>
+                        `}
                     </div>
                     
                     <div class="feed-item-stats">
@@ -944,6 +968,7 @@ async function openPostDetailModal(postId) {
                     <button class="phone-close-btn" onclick="closePostDetailModal()">&times;</button>
                 </div>
                 
+                ${post.image_path ? `
                 <div class="feed-item-media">
                     <img src="/posts/${post.post_id}/image" alt="News Image Card">
                     <div class="media-play-overlay" onclick="closePostDetailModal(); openReelPlayer('${post.post_id}', '${post.username}', '${post.content.replace(/'/g, "\\'")}', ${post.likes_count})">
@@ -952,6 +977,12 @@ async function openPostDetailModal(postId) {
                         </div>
                     </div>
                 </div>
+                ` : `
+                <div class="feed-item-media text-card-media" style="background: linear-gradient(135deg, #181528 0%, #110d21 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 25px; text-align: center; border-radius: 8px; border: 1px solid var(--border-glass); min-height: 120px;">
+                    <span class="text-card-source" style="color: var(--accent-cyan); font-size: 11px; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 2px;">📢 ${post.source} ALERT</span>
+                    <p class="text-card-content" style="color: #fff; font-size: 15px; font-weight: 600; line-height: 1.4; font-family: var(--font-heading);">${post.content}</p>
+                </div>
+                `}
                 
                 <div class="feed-item-actions-bar">
                     <button class="action-icon-btn" onclick="toggleLike('${post.post_id}', this)">
@@ -961,18 +992,33 @@ async function openPostDetailModal(postId) {
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
                     </button>
                     
-                    <button class="action-icon-btn fact-check-badge">
-                        🛡 ${scorePercent} Match
+                    ${post.accuracy_percentage !== null ? `
+                    <button class="action-icon-btn fact-check-badge" style="color: ${post.accuracy_percentage >= 80 ? '#00f0ff' : (post.accuracy_percentage >= 50 ? '#ffb700' : '#ff4747')}; border-color: ${post.accuracy_percentage >= 80 ? '#00f0ff' : (post.accuracy_percentage >= 50 ? '#ffb700' : '#ff4747')}40; background: ${post.accuracy_percentage >= 80 ? '#00f0ff' : (post.accuracy_percentage >= 50 ? '#ffb700' : '#ff4747')}10; font-weight: 700;">
+                        🛡️ AI Checked: ${post.accuracy_percentage}% Accuracy
                     </button>
+                    ` : `
+                    <button class="action-icon-btn fact-check-badge">
+                        🛡️ Match: ${scorePercent}
+                    </button>
+                    `}
                 </div>
                 
                 <div class="feed-item-stats" style="margin-bottom:12px;">
                     <span id="like-count-${post.post_id}">${post.likes_count}</span> likes
                 </div>
                 
-                <div class="feed-item-caption" style="padding-bottom:20px;">
+                <div class="feed-item-caption" style="padding-bottom:10px;">
                     <strong>${post.username}</strong> ${post.content}
                 </div>
+
+                ${post.fact_check_report ? `
+                <div class="ai-report-box" style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid var(--border-glass); max-height: 250px; overflow-y: auto; text-align: left;">
+                    <h4 style="color: var(--accent-cyan); font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; border-bottom: 1px solid var(--border-glass); padding-bottom: 4px; letter-spacing: 1px;">📋 Gemini Fact Check Report</h4>
+                    <div style="font-size: 12px; line-height: 1.6; color: var(--text-secondary);">
+                        ${formatMarkdown(post.fact_check_report)}
+                    </div>
+                </div>
+                ` : ''}
             </div>
         `;
     } catch (e) {

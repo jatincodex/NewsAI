@@ -38,6 +38,8 @@ class SocialPostResponse(BaseModel):
     likes: int
     retweets: int
     confidence_score: float
+    accuracy_percentage: Optional[float] = None
+    fact_check_report: Optional[str] = None
     status: str
     matched_document_id: Optional[int] = None
     matched_snippet: Optional[str] = None
