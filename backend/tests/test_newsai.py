@@ -15,6 +15,82 @@ def s():
     return sess
 
 
+# --- Root-level health endpoints (k8s readiness/liveness probe fix) ---
+# The k8s probe targets the backend pod directly at 127.0.0.1:8001, NOT the
+# public ingress (which routes "/" to the Expo frontend). So we test internally.
+INTERNAL_BACKEND = "http://localhost:8001"
+
+
+def test_root_health_no_api_prefix(s):
+    """Critical: GET / on the backend pod must return 200 JSON. Was 404 -> k8s probe failure."""
+    r = s.get(f"{INTERNAL_BACKEND}/", timeout=10)
+    assert r.status_code == 200, f"Root health probe failing! status={r.status_code}"
+    assert "application/json" in r.headers.get("content-type", "")
+    d = r.json()
+    assert d.get("status") == "ok"
+    assert d.get("service") == "newsai"
+
+
+def test_health_endpoint(s):
+    r = s.get(f"{INTERNAL_BACKEND}/health", timeout=10)
+    assert r.status_code == 200
+    assert "application/json" in r.headers.get("content-type", "")
+    assert r.json().get("status") == "ok"
+
+
+# --- Enriched bulk endpoint ---
+def test_posts_enriched_default_filter(s):
+    """GET /api/posts/enriched should default to verified,debunked statuses."""
+    r = s.get(f"{API}/posts/enriched", timeout=30)
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    if data:
+        item = data[0]
+        assert "post" in item and "report" in item and "render_job" in item
+        assert item["post"]["status"] in ("verified", "debunked")
+
+
+def test_posts_enriched_custom_statuses(s):
+    r = s.get(f"{API}/posts/enriched?statuses=human_review_required&limit=10", timeout=30)
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    for item in data:
+        assert item["post"]["status"] == "human_review_required"
+
+
+# --- Auto-ingest disabled gating ---
+def test_auto_ingest_disabled_no_post_growth(s):
+    """When NEWSAI_AUTO_INGEST is not set, total_posts must NOT grow without manual /api/ingest."""
+    t0 = s.get(f"{API}/stats", timeout=30).json()["total_posts"]
+    time.sleep(15)  # ingestion loop sleeps 6-12s, so 15s would have produced at least one
+    t1 = s.get(f"{API}/stats", timeout=30).json()["total_posts"]
+    assert t1 == t0, f"Auto-ingest should be OFF, but posts grew: {t0} -> {t1}"
+
+
+def test_manual_ingest_still_works_when_auto_disabled(s):
+    """Manual POST /api/ingest should still create posts even with auto-ingest off."""
+    before = s.get(f"{API}/stats", timeout=30).json()["total_posts"]
+    r = s.post(f"{API}/ingest", json={"count": 1}, timeout=30)
+    assert r.status_code == 200
+    created = r.json()["created"]
+    assert len(created) == 1
+    pid = created[0]["id"]
+    after = s.get(f"{API}/stats", timeout=30).json()["total_posts"]
+    assert after == before + 1
+
+    # Wait for Gemini pipeline to finish, then verify post landed in a terminal/queue state
+    for _ in range(12):
+        d = s.get(f"{API}/posts/{pid}", timeout=30).json()
+        st = d["post"]["status"]
+        if st in ("verified", "debunked", "video_generation_pending", "human_review_required"):
+            assert d["report"] is not None, "fact report missing after pipeline"
+            return
+        time.sleep(2)
+    pytest.fail(f"Manual ingest post {pid} never finished pipeline (last status={st})")
+
+
 # --- Stats ---
 def test_stats_shape(s):
     r = s.get(f"{API}/stats", timeout=30)

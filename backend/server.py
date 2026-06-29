@@ -51,6 +51,17 @@ logger = logging.getLogger("newsai")
 app = FastAPI(title="NewsAI Platform")
 api_router = APIRouter(prefix="/api")
 
+
+# Root-level health endpoints (k8s liveness/readiness probes hit "/")
+@app.get("/")
+async def root_health():
+    return {"status": "ok", "service": "newsai", "time": utc_now_iso()}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 # ============================================================
 # In-memory TTL cache (Redis stand-in)
 # ============================================================
@@ -431,6 +442,30 @@ async def list_posts(status: Optional[str] = None, limit: int = 50):
     return posts
 
 
+@api_router.get("/posts/enriched")
+async def list_posts_enriched(statuses: str = "verified,debunked", limit: int = 50):
+    """Bulk variant: returns posts with their latest fact_report + render_job in one call.
+    Avoids frontend N+1 on the Verified screen."""
+    status_list = [s.strip() for s in statuses.split(",") if s.strip()]
+    query = {"status": {"$in": status_list}} if status_list else {}
+    posts = await db.posts.find(query, {"_id": 0}).sort("updated_at", -1).limit(limit).to_list(length=limit)
+    if not posts:
+        return []
+    ids = [p["id"] for p in posts]
+    reports = await db.fact_reports.find({"post_id": {"$in": ids}}, {"_id": 0}).sort("verified_at", -1).to_list(length=2000)
+    rep_map: Dict[str, Any] = {}
+    for r in reports:
+        rep_map.setdefault(r["post_id"], r)
+    jobs = await db.render_jobs.find({"post_id": {"$in": ids}}, {"_id": 0}).sort("created_at", -1).to_list(length=2000)
+    job_map: Dict[str, Any] = {}
+    for j in jobs:
+        job_map.setdefault(j["post_id"], j)
+    return [
+        {"post": p, "report": rep_map.get(p["id"]), "render_job": job_map.get(p["id"])}
+        for p in posts
+    ]
+
+
 @api_router.get("/posts/{post_id}")
 async def get_post(post_id: str):
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
@@ -451,13 +486,17 @@ async def admin_queue():
         {"status": "human_review_required"}, {"_id": 0}
     ).sort("created_at", -1)
     posts = await cursor.to_list(length=200)
-    enriched = []
-    for p in posts:
-        rep = await db.fact_reports.find_one(
-            {"post_id": p["id"]}, {"_id": 0}, sort=[("verified_at", -1)]
-        )
-        enriched.append({"post": p, "report": rep})
-    return enriched
+    if not posts:
+        return []
+    post_ids = [p["id"] for p in posts]
+    reports = await db.fact_reports.find(
+        {"post_id": {"$in": post_ids}}, {"_id": 0}
+    ).sort("verified_at", -1).to_list(length=2000)
+    # latest report per post_id (cursor is sorted desc by verified_at)
+    rep_map: Dict[str, Any] = {}
+    for r in reports:
+        rep_map.setdefault(r["post_id"], r)
+    return [{"post": p, "report": rep_map.get(p["id"])} for p in posts]
 
 
 class ModerationDecision(BaseModel):
@@ -545,6 +584,15 @@ async def on_startup():
     await db.posts.create_index("created_at")
     await db.fact_reports.create_index("post_id")
     await db.render_jobs.create_index("post_id")
+
+    # Auto-ingestion (continuous mock streams + initial seed) is OPT-IN.
+    # In production this would otherwise hammer the LLM and grow the DB
+    # unboundedly. Set NEWSAI_AUTO_INGEST=1 in /app/backend/.env to enable.
+    auto_ingest = os.environ.get("NEWSAI_AUTO_INGEST", "0") == "1"
+    if not auto_ingest:
+        logger.info("NEWSAI_AUTO_INGEST disabled; skipping seed + ingestion loop")
+        return
+
     # seed if empty
     if await db.posts.count_documents({}) == 0:
         logger.info("Seeding initial posts")
