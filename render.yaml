@@ -16,4 +16,6 @@ services:
         sync: false
       - key: FIREBASE_PROJECT_ID
         sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.0"
     autoDeploy: true

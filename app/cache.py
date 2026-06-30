@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 import redis
 import hashlib
 import json
@@ -24,7 +25,7 @@ def get_redis_client():
             _redis_client = False
     return _redis_client if _redis_client is not False else None
 
-def get_cached_fact_check(claim_content: str) -> dict | None:
+def get_cached_fact_check(claim_content: str) -> Optional[dict]:
     client = get_redis_client()
     if not client:
         return None
@@ -52,7 +53,7 @@ def set_cached_fact_check(claim_content: str, result: dict, expire_seconds: int 
     except Exception as e:
         logger.error(f"[Cache] Error writing fact check cache: {e}")
 
-def get_cached_posts() -> list | None:
+def get_cached_posts() -> Optional[list]:
     client = get_redis_client()
     if not client:
         return None
