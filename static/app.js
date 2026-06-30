@@ -657,12 +657,20 @@ async function loadDMsSidebar() {
         // Exclude current user from conversation list
         const otherUsers = users.filter(u => u.username !== currentUser.username);
         
-        if (otherUsers.length === 0) {
-            list.innerHTML = '<div class="empty-state">No other users online yet.</div>';
+        // Filter list based on search bar query
+        const searchInput = document.getElementById('dm-search-input');
+        const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+        const filteredUsers = otherUsers.filter(u => 
+            u.username.toLowerCase().includes(query) || 
+            (u.display_name && u.display_name.toLowerCase().includes(query))
+        );
+        
+        if (filteredUsers.length === 0) {
+            list.innerHTML = '<div class="empty-state">No matching users.</div>';
             return;
         }
         
-        list.innerHTML = otherUsers.map(u => {
+        list.innerHTML = filteredUsers.map(u => {
             const userAvatar = getAvatarUrl(u.avatar_index, u.username);
             const activeClass = (activeChatRecipient && activeChatRecipient.username === u.username) ? 'active' : '';
             return `
@@ -730,6 +738,55 @@ async function openChatWith(username) {
 }
 
 
+// Helper to calculate consecutive clustering layout styles
+function assignClusteringClasses(msgs) {
+    for (let i = 0; i < msgs.length; i++) {
+        const current = msgs[i];
+        const prev = msgs[i - 1];
+        const next = msgs[i + 1];
+
+        const prevIsSame = prev && prev.sender_id === current.sender_id && 
+                           (new Date(current.created_at) - new Date(prev.created_at)) < 60000;
+        const nextIsSame = next && next.sender_id === current.sender_id && 
+                           (new Date(next.created_at) - new Date(current.created_at)) < 60000;
+
+        if (prevIsSame && nextIsSame) {
+            current.clusterClass = 'bubble-middle';
+        } else if (prevIsSame && !nextIsSame) {
+            current.clusterClass = 'bubble-last';
+        } else if (!prevIsSame && nextIsSame) {
+            current.clusterClass = 'bubble-first';
+        } else {
+            current.clusterClass = 'bubble-single';
+        }
+    }
+    return msgs;
+}
+
+// Double click to toggle heart reaction like on Instagram
+function toggleMessageReaction(msgId, event) {
+    if (event) event.stopPropagation();
+    const key = `newsai_reaction_${msgId}`;
+    if (localStorage.getItem(key)) {
+        localStorage.removeItem(key);
+    } else {
+        localStorage.setItem(key, "❤️");
+    }
+    // Refresh active logs to display heart react instantly
+    if (activeChatRecipient) loadChatLogs();
+    else if (activeGroupChat) loadGroupMessages();
+}
+
+// Emoji insert shortcut helper
+function insertEmojiShortcut(emoji, inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.value += emoji;
+    // Dispatch input event to update Send button state if any listener is active
+    input.dispatchEvent(new Event('input'));
+    input.focus();
+}
+
 async function loadChatLogs() {
     if (!activeChatRecipient) return;
     const logsContainer = document.getElementById('chat-logs-container');
@@ -757,12 +814,21 @@ async function loadChatLogs() {
             return { ...msg, decryptedText: text, isSent };
         }));
 
-        logsContainer.innerHTML = decryptedMsgs.map(msg => `
-            <div class="chat-bubble ${msg.isSent ? 'sent' : 'received'}">
-                <div>${msg.decryptedText || '<span class="bubble-decrypting">🔒 Decrypting...</span>'}</div>
-                <div class="chat-bubble-time">${formatDate(msg.created_at)}${msg.is_encrypted ? ' <span class="chat-bubble-lock">🔒</span>' : ''}</div>
-            </div>
-        `).join('');
+        // Assign bubble consecutive clustering classes
+        const msgsWithCluster = assignClusteringClasses(decryptedMsgs);
+
+        logsContainer.innerHTML = msgsWithCluster.map(msg => {
+            const reaction = localStorage.getItem(`newsai_reaction_${msg.id}`);
+            const reactionHtml = reaction ? `<span class="bubble-reaction-heart" onclick="toggleMessageReaction('${msg.id}', event)">❤️</span>` : '';
+            return `
+                <div class="chat-bubble ${msg.isSent ? 'sent' : 'received'} ${msg.clusterClass || 'bubble-single'}" 
+                     ondblclick="toggleMessageReaction('${msg.id}', event)">
+                    <div>${msg.decryptedText || '<span class="bubble-decrypting">🔒 Decrypting...</span>'}</div>
+                    <div class="chat-bubble-time">${formatDate(msg.created_at)}${msg.is_encrypted ? ' <span class="chat-bubble-lock">🔒</span>' : ''}</div>
+                    ${reactionHtml}
+                </div>
+            `;
+        }).join('');
 
         logsContainer.scrollTop = logsContainer.scrollHeight;
     } catch (e) { console.error(e); }
@@ -893,13 +959,23 @@ async function loadGroupMessages() {
             return { ...msg, decryptedText: text, isSent, senderName };
         }));
 
-        logsContainer.innerHTML = decryptedMsgs.map(msg => `
-            <div class="chat-bubble ${msg.isSent ? 'sent' : 'received'}">
-                ${!msg.isSent ? `<div style="font-size:10px; color:var(--accent-cyan); margin-bottom:2px; font-weight:600;">${msg.senderName}</div>` : ''}
-                <div>${msg.decryptedText}</div>
-                <div class="chat-bubble-time">${formatDate(msg.created_at)} <span class="chat-bubble-lock">🔒</span></div>
-            </div>
-        `).join('');
+        // Assign bubble consecutive clustering classes
+        const msgsWithCluster = assignClusteringClasses(decryptedMsgs);
+
+        logsContainer.innerHTML = msgsWithCluster.map(msg => {
+            const reaction = localStorage.getItem(`newsai_reaction_${msg.id}`);
+            const reactionHtml = reaction ? `<span class="bubble-reaction-heart" onclick="toggleMessageReaction('${msg.id}', event)">❤️</span>` : '';
+            const showSenderHeader = !msg.isSent && (msg.clusterClass === 'bubble-single' || msg.clusterClass === 'bubble-first');
+            return `
+                <div class="chat-bubble ${msg.isSent ? 'sent' : 'received'} ${msg.clusterClass || 'bubble-single'}" 
+                     ondblclick="toggleMessageReaction('${msg.id}', event)">
+                    ${showSenderHeader ? `<div style="font-size:10px; color:var(--accent-cyan); margin-bottom:2px; font-weight:600;">${msg.senderName}</div>` : ''}
+                    <div>${msg.decryptedText}</div>
+                    <div class="chat-bubble-time">${formatDate(msg.created_at)} <span class="chat-bubble-lock">🔒</span></div>
+                    ${reactionHtml}
+                </div>
+            `;
+        }).join('');
         logsContainer.scrollTop = logsContainer.scrollHeight;
     } catch (e) { console.error(e); }
 }
@@ -1937,6 +2013,14 @@ window.addEventListener('DOMContentLoaded', () => {
     // Generate initial random Post ID for preset testing
     document.getElementById('post-id').value = 'post_' + Math.floor(Math.random() * 9000 + 1000);
     
+    // Direct messages search sidebar real-time filter
+    const dmSearch = document.getElementById('dm-search-input');
+    if (dmSearch) {
+        dmSearch.addEventListener('input', () => {
+            loadDMsSidebar();
+        });
+    }
+
     // Bootstrap Session
     checkAuth();
     

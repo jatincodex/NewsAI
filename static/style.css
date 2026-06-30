@@ -1717,3 +1717,92 @@ body.dark-mode {
     cursor: pointer;
 }
 
+/* ==========================================================================
+   Instagram-Style Chat Custom styles
+   ========================================================================== */
+.chat-logs {
+    gap: 4px; /* Tight gap by default for grouping */
+    padding: 16px 20px;
+}
+
+.chat-bubble {
+    position: relative;
+    max-width: 60%;
+    margin-bottom: 2px;
+    transition: transform 0.1s ease;
+    user-select: none;
+}
+
+/* Heart Reaction Badge */
+.bubble-reaction-heart {
+    position: absolute;
+    bottom: -8px;
+    right: 12px;
+    background: #1e1b2f;
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    padding: 2px 5px;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    animation: popReaction 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    cursor: pointer;
+    z-index: 10;
+}
+.chat-bubble.received .bubble-reaction-heart {
+    left: 12px;
+    right: auto;
+}
+@keyframes popReaction {
+    0% { transform: scale(0); }
+    100% { transform: scale(1); }
+}
+
+/* Bubble clustering rounded corners: Sent Messages */
+.chat-bubble.sent {
+    align-self: flex-end;
+    background: #3797EF;
+    color: #fff;
+    box-shadow: none;
+}
+.chat-bubble.sent.bubble-single {
+    border-radius: 18px 18px 4px 18px;
+    margin-top: 10px;
+}
+.chat-bubble.sent.bubble-first {
+    border-radius: 18px 18px 4px 18px;
+    margin-top: 10px;
+}
+.chat-bubble.sent.bubble-middle {
+    border-radius: 18px 4px 4px 18px;
+}
+.chat-bubble.sent.bubble-last {
+    border-radius: 18px 4px 18px 18px;
+    margin-bottom: 10px;
+}
+
+/* Bubble clustering rounded corners: Received Messages */
+.chat-bubble.received {
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.12);
+    border: none;
+    color: var(--text-primary);
+}
+.chat-bubble.received.bubble-single {
+    border-radius: 18px 18px 18px 4px;
+    margin-top: 10px;
+}
+.chat-bubble.received.bubble-first {
+    border-radius: 18px 18px 18px 4px;
+    margin-top: 10px;
+}
+.chat-bubble.received.bubble-middle {
+    border-radius: 4px 18px 18px 4px;
+}
+.chat-bubble.received.bubble-last {
+    border-radius: 4px 18px 18px 18px;
+    margin-bottom: 10px;
+}
+
+

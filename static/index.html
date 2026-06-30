@@ -168,6 +168,14 @@
                             </button>
                         </div>
 
+                        <!-- DM Search Bar -->
+                        <div class="sidebar-search-box" style="padding: 10px 16px; border-bottom: 1px solid var(--border-glass);">
+                            <div class="search-box" style="margin-bottom: 0;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 12px; top: 10px; opacity: 0.5;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                <input type="text" id="dm-search-input" placeholder="Search direct messages..." style="font-size: 12px; padding: 8px 12px 8px 32px; border-radius: 20px; background: rgba(0,0,0,0.2); border: 1px solid var(--border-glass); color: #fff; width: 100%; outline: none;">
+                            </div>
+                        </div>
+
                         <!-- DM / Group Tabs -->
                         <div class="msg-tabs">
                             <button class="msg-tab active" id="tab-dms" onclick="switchMsgTab('dms')">💬 DMs</button>
@@ -198,8 +206,11 @@
                     <!-- Active DM Chat Pane -->
                     <div class="messages-chat-pane hidden" id="chat-pane-active">
                         <div class="chat-header">
-                            <img src="" alt="Avatar" class="avatar-sm" id="chat-recipient-avatar">
-                            <div>
+                            <div style="position: relative; cursor: pointer;" id="chat-recipient-avatar-wrapper">
+                                <img src="" alt="Avatar" class="avatar-sm" id="chat-recipient-avatar">
+                                <span class="online-indicator-status" style="position: absolute; bottom: 0; right: 0; width: 10px; height: 10px; border-radius: 50%; background: #22c55e; border: 2px solid #1a152e;"></span>
+                            </div>
+                            <div style="cursor: pointer;" id="chat-recipient-details-text">
                                 <h4 id="chat-recipient-name">Recipient Name</h4>
                                 <p id="chat-recipient-handle">@handle</p>
                             </div>
@@ -207,11 +218,16 @@
                             <button class="btn btn-follow-toggle" id="chat-profile-follow-btn" style="margin-left:auto; padding:4px 10px; font-size:11px;">Follow</button>
                         </div>
                         <div class="chat-logs" id="chat-logs-container"></div>
-                        <form class="chat-input-form" id="chat-send-form">
-                            <input type="text" id="chat-message-input" required placeholder="Write an encrypted message...">
-                            <button type="submit" class="btn btn-glow">
-                                <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-                            </button>
+                        <form class="chat-input-form" id="chat-send-form" style="border-top:1px solid var(--border-glass); padding:12px 20px; display:flex; gap:12px; align-items:center; background:rgba(0,0,0,0.1);">
+                            <div class="chat-input-actions" style="display:flex; gap:12px; color:var(--text-secondary); cursor:pointer;">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" title="Photo"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" title="Like"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                            </div>
+                            <div style="flex:1; position:relative; display:flex; align-items:center;">
+                                <input type="text" id="chat-message-input" required placeholder="Message..." style="width:100%; padding:10px 16px; border-radius:24px; background:rgba(255,255,255,0.06); border:1px solid var(--border-glass); color:#fff; font-size:13px; outline:none; padding-right:40px;">
+                                <span style="position:absolute; right:14px; font-size:18px; cursor:pointer; opacity:0.7;" title="Send emoji reaction" onclick="insertEmojiShortcut('😀', 'chat-message-input')">😀</span>
+                            </div>
+                            <button type="submit" class="btn btn-glow btn-send-dm" style="padding:8px 16px; border-radius:20px; font-size:12px; font-weight:700;">Send</button>
                         </form>
                     </div>
 
@@ -226,11 +242,16 @@
                             <span class="e2e-lock-badge" title="End-to-End Encrypted">🔒 E2EE</span>
                         </div>
                         <div class="chat-logs" id="group-logs-container"></div>
-                        <form class="chat-input-form" id="group-send-form">
-                            <input type="text" id="group-message-input" required placeholder="Write an encrypted group message...">
-                            <button type="submit" class="btn btn-glow">
-                                <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-                            </button>
+                        <form class="chat-input-form" id="group-send-form" style="border-top:1px solid var(--border-glass); padding:12px 20px; display:flex; gap:12px; align-items:center; background:rgba(0,0,0,0.1);">
+                            <div class="chat-input-actions" style="display:flex; gap:12px; color:var(--text-secondary); cursor:pointer;">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" title="Photo"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" title="Like"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                            </div>
+                            <div style="flex:1; position:relative; display:flex; align-items:center;">
+                                <input type="text" id="group-message-input" required placeholder="Message group..." style="width:100%; padding:10px 16px; border-radius:24px; background:rgba(255,255,255,0.06); border:1px solid var(--border-glass); color:#fff; font-size:13px; outline:none; padding-right:40px;">
+                                <span style="position:absolute; right:14px; font-size:18px; cursor:pointer; opacity:0.7;" title="Send emoji reaction" onclick="insertEmojiShortcut('😀', 'group-message-input')">😀</span>
+                            </div>
+                            <button type="submit" class="btn btn-glow btn-send-dm" style="padding:8px 16px; border-radius:20px; font-size:12px; font-weight:700;">Send</button>
                         </form>
                     </div>
                 </div>
@@ -891,6 +912,6 @@
     </div>
 
     <!-- Frontend controller script -->
-    <script src="/static/app.js?v=1.0.7" defer></script>
+    <script src="/static/app.js?v=1.0.8" defer></script>
 </body>
 </html>
