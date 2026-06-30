@@ -1589,12 +1589,12 @@ async function openPostDetailModal(postId) {
                 </div>
                 
                 <div class="feed-item-caption" style="padding-bottom:10px;">
-                    <strong>${post.username}</strong> ${post.content}
-                </div>
-
-                ${post.fact_check_report ? `
+                     ${post.fact_check_report ? `
                 <div class="ai-report-box" style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid var(--border-glass); max-height: 250px; overflow-y: auto; text-align: left;">
-                    <h4 style="color: var(--accent-cyan); font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; border-bottom: 1px solid var(--border-glass); padding-bottom: 4px; letter-spacing: 1px;">📋 Gemini Fact Check Report</h4>
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-glass); padding-bottom: 4px; margin-bottom: 8px;">
+                        <h4 style="color: var(--accent-cyan); font-size: 11px; font-weight: 700; text-transform: uppercase; margin: 0; letter-spacing: 1px;">📋 Gemini Fact Check Report</h4>
+                        <button class="btn btn-glow btn-sm" onclick="downloadPDFReport('${post.post_id}')" style="padding: 3px 8px; font-size: 10px;">💾 Export PDF</button>
+                    </div>
                     <div style="font-size: 12px; line-height: 1.6; color: var(--text-secondary);">
                         ${formatMarkdown(post.fact_check_report)}
                     </div>
@@ -1605,6 +1605,147 @@ async function openPostDetailModal(postId) {
     } catch (e) {
         card.innerHTML = '<div class="empty-state">Failed to load detail info.</div>';
     }
+}
+
+// Client-Side PDF Report Generator
+function downloadPDFReport(postId) {
+    const post = activePostsCache.find(p => p.post_id === postId);
+    if (!post) { alert('Report document not found.'); return; }
+
+    const printWindow = window.open('', '_blank', 'width=800,height=900');
+    const now = new Date().toLocaleString();
+
+    const reportHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Verification Report - ${post.post_id}</title>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                    color: #2D3748;
+                    line-height: 1.6;
+                    padding: 40px;
+                    max-width: 800px;
+                    margin: 0 auto;
+                }
+                .header {
+                    border-bottom: 2px solid #2B6CB0;
+                    padding-bottom: 20px;
+                    margin-bottom: 30px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                .title {
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #1A365D;
+                    margin: 0;
+                }
+                .metadata-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 15px;
+                    background: #EDF2F7;
+                    padding: 20px;
+                    border-radius: 8px;
+                    margin-bottom: 30px;
+                }
+                .meta-item {
+                    font-size: 13px;
+                }
+                .meta-label {
+                    font-weight: bold;
+                    color: #4A5568;
+                }
+                .claim-box {
+                    border-left: 4px solid #3182CE;
+                    padding: 15px 20px;
+                    background: #F7FAFC;
+                    margin-bottom: 30px;
+                    font-style: italic;
+                    font-size: 14px;
+                }
+                .verdict-badge {
+                    display: inline-block;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 14px;
+                    text-transform: uppercase;
+                    margin-bottom: 20px;
+                    background: #EBF8FF;
+                    color: #2B6CB0;
+                    border: 1px solid #BEE3F8;
+                }
+                .report-body {
+                    margin-top: 20px;
+                    font-size: 13px;
+                }
+                .footer {
+                    margin-top: 50px;
+                    border-top: 1px solid #E2E8F0;
+                    padding-top: 20px;
+                    font-size: 11px;
+                    color: #718096;
+                    text-align: center;
+                }
+                @media print {
+                    body { padding: 0; }
+                    .no-print { display: none; }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <div>
+                    <h1 class="title">🛡️ NewsAI Verification Report</h1>
+                    <p style="font-size:12px; color:#4A5568; margin:4px 0 0 0;">Automated Ingestion & AI Verification Engine</p>
+                </div>
+                <button class="no-print" onclick="window.print()" style="padding: 8px 16px; background: #3182CE; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Print / Save as PDF</button>
+            </div>
+
+            <div class="metadata-grid">
+                <div class="meta-item"><span class="meta-label">Story Reference ID:</span> ${post.post_id}</div>
+                <div class="meta-item"><span class="meta-label">Ingested Source:</span> ${post.source}</div>
+                <div class="meta-item"><span class="meta-label">Original Poster:</span> @${post.username}</div>
+                <div class="meta-item"><span class="meta-label">Ingested Timestamp:</span> ${new Date(post.created_at).toLocaleString()}</div>
+                <div class="meta-item"><span class="meta-label">Likes:</span> ${post.likes || 0}</div>
+                <div class="meta-item"><span class="meta-label">Retweets / Shares:</span> ${post.retweets || 0}</div>
+            </div>
+
+            <h3 style="color:#2B6CB0; margin-bottom: 8px;">Discovered Social Media Claim:</h3>
+            <div class="claim-box">
+                "${post.content}"
+            </div>
+
+            <h3 style="color:#2B6CB0; margin-bottom: 8px;">Verification Verdict:</h3>
+            <div class="verdict-badge">
+                Gemini Accuracy Check: ${post.accuracy_percentage || 0}% Match
+            </div>
+
+            <h3 style="color:#2B6CB0; margin-bottom: 8px;">Detailed Analysis Report:</h3>
+            <div class="report-body">
+                ${formatMarkdown(post.fact_check_report || 'No detailed analysis document generated.').replace(/\n/g, '<br>')}
+            </div>
+
+            <div class="footer">
+                Report generated automatically by NewsAI on ${now}. Powered by Gemini Advanced Agentic Verification.
+            </div>
+            <script>
+                window.onload = function() {
+                    setTimeout(function() {
+                        window.print();
+                    }, 500);
+                };
+            </script>
+        </body>
+        </html>
+    `;
+
+    printWindow.document.write(reportHtml);
+    printWindow.document.close();
 }
 
 function closePostDetailModal() {
