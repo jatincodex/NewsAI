@@ -988,6 +988,7 @@ async function loadUserProfile(username) {
     
     const avatar = document.getElementById('profile-avatar-img');
     const usernameHeader = document.getElementById('profile-username-header');
+    const idDisplay = document.getElementById('profile-id-display');
     const displayName = document.getElementById('profile-display-name');
     const bioText = document.getElementById('profile-bio-text');
     const postsCount = document.getElementById('profile-posts-count');
@@ -1002,6 +1003,7 @@ async function loadUserProfile(username) {
         
         avatar.src = getAvatarUrl(profile.avatar_index, profile.username);
         usernameHeader.textContent = profile.username;
+        if (idDisplay) idDisplay.textContent = `ID: ${profile.id}`;
         displayName.textContent = profile.display_name || profile.username;
         bioText.textContent = profile.bio || "No biography details added.";
         postsCount.textContent = profile.posts_count;
