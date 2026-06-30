@@ -36,6 +36,7 @@ let activeGroupChat = null;
 let followingList = [];
 let chatLogsInterval = null;
 let groupLogsInterval = null;
+let messageSidebarInterval = null;
 let activePostsCache = [];
 let activeCommentsPostId = null;
 let selectedAvatarIndex = 1;
@@ -294,10 +295,11 @@ function setupUserFooter() {
 function navigateTo(viewId) {
     activeView = viewId;
     
-    // Deactivate DM logs interval if switching away from messages
-    if (viewId !== 'messages' && chatLogsInterval) {
-        clearInterval(chatLogsInterval);
-        chatLogsInterval = null;
+    // Deactivate DM logs and sidebar polling if switching away from messages
+    if (viewId !== 'messages') {
+        if (chatLogsInterval) { clearInterval(chatLogsInterval); chatLogsInterval = null; }
+        if (groupLogsInterval) { clearInterval(groupLogsInterval); groupLogsInterval = null; }
+        if (messageSidebarInterval) { clearInterval(messageSidebarInterval); messageSidebarInterval = null; }
     }
     
     // Set active class in sidebar
@@ -322,7 +324,20 @@ function navigateTo(viewId) {
     if (viewId === 'home') loadHomeFeed();
     else if (viewId === 'explore') loadExploreGrid();
     else if (viewId === 'reels') loadReelsSwiper();
-    else if (viewId === 'messages') { loadDMsSidebar(); loadGroupsSidebar(); }
+    else if (viewId === 'messages') { 
+        loadDMsSidebar(); 
+        loadGroupsSidebar(); 
+        // Poll for newly registered/online users in sidebar list
+        if (!messageSidebarInterval) {
+            messageSidebarInterval = setInterval(() => {
+                const searchInput = document.getElementById('dm-search-input');
+                if (!searchInput || !searchInput.value.trim()) {
+                    loadDMsSidebar();
+                    loadGroupsSidebar();
+                }
+            }, 4000);
+        }
+    }
     else if (viewId === 'admin') loadAdminPanel();
     else if (viewId === 'profile') loadUserProfile(currentUser.username);
 }
@@ -705,8 +720,8 @@ async function loadDMsSidebar() {
         if (!response.ok) throw new Error();
         const users = await response.json();
         
-        // Exclude current user from conversation list
-        const otherUsers = users.filter(u => u.username !== currentUser.username);
+        // Exclude current user from conversation list (case-insensitive check)
+        const otherUsers = users.filter(u => u.username.toLowerCase() !== currentUser.username.toLowerCase());
         
         // Filter list based on search bar query
         const searchInput = document.getElementById('dm-search-input');
@@ -723,7 +738,7 @@ async function loadDMsSidebar() {
         
         list.innerHTML = filteredUsers.map(u => {
             const userAvatar = getAvatarUrl(u.avatar_index, u.username);
-            const activeClass = (activeChatRecipient && activeChatRecipient.username === u.username) ? 'active' : '';
+            const activeClass = (activeChatRecipient && activeChatRecipient.username.toLowerCase() === u.username.toLowerCase()) ? 'active' : '';
             return `
                 <div class="dm-user-item ${activeClass}" onclick="openChatWith('${u.username}')">
                     <img src="${userAvatar}" alt="Avatar" class="avatar-sm">
