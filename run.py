@@ -14,12 +14,12 @@ if __name__ == "__main__":
     os.environ["NEWS_AI_CELERY_TASK_ALWAYS_EAGER"] = "True"
 
     # Detect storage mode
-    has_firebase = all([
-        os.getenv("FIREBASE_PROJECT_ID"),
-        os.getenv("FIREBASE_CLIENT_EMAIL"),
-        os.getenv("FIREBASE_PRIVATE_KEY") or os.getenv("FIREBASE_CREDENTIALS_JSON")
-    ])
-    storage_mode = "🔥 Firebase Firestore (Permanent Cloud)" if has_firebase else "⚠️  SQLite Mock (Local Only — Data resets on restart)"
+    has_firebase = bool(os.getenv("FIREBASE_CREDENTIALS_JSON") or (
+        os.getenv("FIREBASE_PROJECT_ID") and
+        os.getenv("FIREBASE_CLIENT_EMAIL") and
+        os.getenv("FIREBASE_PRIVATE_KEY")
+    ))
+    storage_mode = "[FIREBASE] Firestore Cloud Storage (Permanent)" if has_firebase else "[SQLITE] Mock Storage (Local Only - Resets on restart)"
 
     print("\n=============================================")
     print("Starting NewsAI Platform on http://127.0.0.1:8081")
