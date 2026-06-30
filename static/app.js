@@ -539,6 +539,14 @@ async function toggleSavePost(postId, button) {
 // --- 2. VIEW: EXPLORE (SEARCH GRID) ---
 async function loadExploreGrid(query = '') {
     const grid = document.getElementById('explore-posts-grid');
+    const creatorsContainer = document.getElementById('explore-creators-container');
+    const creatorsList = document.getElementById('explore-users-list');
+    const postsHeading = document.getElementById('explore-posts-heading');
+
+    // Default hidden states
+    if (creatorsContainer) creatorsContainer.classList.add('hidden');
+    if (postsHeading) postsHeading.style.display = 'none';
+
     try {
         const url = query ? `/explore?query=${encodeURIComponent(query)}` : '/posts';
         const response = await fetch(url, { headers: getHeaders() });
@@ -546,11 +554,54 @@ async function loadExploreGrid(query = '') {
         const posts = await response.json();
         
         const publishedPosts = posts.filter(p => p.status === 'published');
+
+        // Handle User Profile Searching
+        if (query) {
+            const uRes = await fetch('/users', { headers: getHeaders() });
+            if (uRes.ok) {
+                const allUsers = await uRes.json();
+                const cleanQuery = query.toLowerCase();
+                const matchedUsers = allUsers.filter(u => 
+                    u.username !== currentUser.username && (
+                        u.username.toLowerCase().includes(cleanQuery) || 
+                        (u.display_name && u.display_name.toLowerCase().includes(cleanQuery))
+                    )
+                );
+
+                if (matchedUsers.length > 0 && creatorsContainer && creatorsList) {
+                    creatorsContainer.classList.remove('hidden');
+                    
+                    // Fetch details for each to get following status
+                    const cards = await Promise.all(matchedUsers.map(async u => {
+                        const pRes = await fetch(`/users/${u.username}/profile`, { headers: getHeaders() });
+                        if (!pRes.ok) return '';
+                        const profile = await pRes.json();
+                        const userAvatar = getAvatarUrl(profile.avatar_index, profile.username);
+                        return `
+                            <div class="card" style="display:flex; align-items:center; gap:12px; padding:10px 16px; border-radius:12px; min-width:200px; max-width:280px; flex:1; background:rgba(255,255,255,0.03); border:1px solid var(--border-glass);">
+                                <img src="${userAvatar}" class="avatar-sm" onclick="loadUserProfile('${u.username}')" style="cursor:pointer;">
+                                <div style="min-width:0; flex:1; cursor:pointer;" onclick="loadUserProfile('${u.username}')">
+                                    <h4 style="margin:0; font-size:12px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${profile.display_name || u.username}</h4>
+                                    <p style="margin:0; font-size:10px; color:var(--text-muted);">@${u.username}</p>
+                                </div>
+                                <button class="btn btn-follow-xs ${profile.is_following ? '' : 'btn-glow'}" style="padding:4px 10px;" onclick="toggleFollowSuggested('${u.username}', this)">
+                                    ${profile.is_following ? 'Following' : 'Follow'}
+                                </button>
+                            </div>
+                        `;
+                    }));
+                    creatorsList.innerHTML = cards.join('');
+                }
+            }
+        }
+
         if (publishedPosts.length === 0) {
             grid.innerHTML = '<div class="empty-state" style="grid-column: 1/-1;">No matching posts found.</div>';
             return;
         }
-        
+
+        if (postsHeading) postsHeading.style.display = 'block';
+
         grid.innerHTML = publishedPosts.map(post => `
             <div class="grid-cell" onclick="openPostDetailModal('${post.post_id}')">
                 <img src="/posts/${post.post_id}/image" alt="Grid Thumbnail">

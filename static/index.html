@@ -107,10 +107,20 @@
                 <div class="explore-header">
                     <div class="search-box">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                        <input type="text" id="explore-search-input" placeholder="Search news keyword or source...">
+                        <input type="text" id="explore-search-input" placeholder="Search creators, news keywords, or sources...">
                     </div>
                 </div>
+
+                <!-- Matching Creators Section -->
+                <div class="explore-creators-section hidden" id="explore-creators-container" style="margin-bottom: 24px; padding: 0 10px;">
+                    <h3 style="font-family: var(--font-heading); font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--accent-cyan); letter-spacing: 0.5px;">SUGGESTED CREATORS</h3>
+                    <div id="explore-users-list" style="display: flex; gap: 12px; flex-wrap: wrap;">
+                        <!-- Matching users populated dynamically -->
+                    </div>
+                </div>
+
                 <div class="explore-grid-container">
+                    <h3 id="explore-posts-heading" style="font-family: var(--font-heading); font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--text-secondary); letter-spacing: 0.5px; display: none;">STORIES</h3>
                     <div class="explore-grid" id="explore-posts-grid">
                         <!-- Populated dynamically -->
                         <div class="empty-state" style="grid-column: 1 / -1;">No posts match search query.</div>
@@ -912,6 +922,6 @@
     </div>
 
     <!-- Frontend controller script -->
-    <script src="/static/app.js?v=1.0.8" defer></script>
+    <script src="/static/app.js?v=1.0.9" defer></script>
 </body>
 </html>
