@@ -32,13 +32,153 @@ function setSessionToken(t, user = null) {
 }
 
 let activeChatRecipient = null;
+let activeGroupChat = null;
 let followingList = [];
 let chatLogsInterval = null;
+let groupLogsInterval = null;
 let activePostsCache = [];
 let activeCommentsPostId = null;
 let selectedAvatarIndex = 1;
 let activeReelIndex = 0;
 let reelsCache = [];
+
+// ==========================================================================
+// E2EE CRYPTO ENGINE  (Web Crypto API — RSA-OAEP + AES-GCM)
+// Private key lives ONLY in localStorage, never sent to server.
+// ==========================================================================
+const CryptoEngine = {
+    // Generate a 2048-bit RSA-OAEP key pair
+    async generateKeyPair() {
+        return await crypto.subtle.generateKey(
+            { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+            true, ['encrypt', 'decrypt']
+        );
+    },
+
+    // Export public key as JWK string (safe to upload to server)
+    async exportPublicKey(publicKey) {
+        const jwk = await crypto.subtle.exportKey('jwk', publicKey);
+        return JSON.stringify(jwk);
+    },
+
+    // Export private key as JWK string (store ONLY in localStorage)
+    async exportPrivateKey(privateKey) {
+        const jwk = await crypto.subtle.exportKey('jwk', privateKey);
+        return JSON.stringify(jwk);
+    },
+
+    // Import a public key from JWK string
+    async importPublicKey(jwkString) {
+        const jwk = typeof jwkString === 'string' ? JSON.parse(jwkString) : jwkString;
+        return await crypto.subtle.importKey('jwk', jwk, { name: 'RSA-OAEP', hash: 'SHA-256' }, true, ['encrypt']);
+    },
+
+    // Import a private key from JWK string
+    async importPrivateKey(jwkString) {
+        const jwk = typeof jwkString === 'string' ? JSON.parse(jwkString) : jwkString;
+        return await crypto.subtle.importKey('jwk', jwk, { name: 'RSA-OAEP', hash: 'SHA-256' }, true, ['decrypt']);
+    },
+
+    // Encrypt a plaintext string for one or more recipients
+    // Returns { encryptedText: base64, encryptedKeys: { userId: base64 } }
+    async encrypt(plaintext, recipientPublicKeys) {
+        // Generate a random AES-256-GCM session key
+        const aesKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(plaintext);
+        const cipherBuffer = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, encoded);
+
+        // Export AES key raw bytes
+        const aesRaw = await crypto.subtle.exportKey('raw', aesKey);
+
+        // Combine iv + ciphertext
+        const combined = new Uint8Array(iv.length + cipherBuffer.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(cipherBuffer), iv.length);
+        const encryptedText = btoa(String.fromCharCode(...combined));
+
+        // Wrap AES key with each recipient's RSA public key
+        const encryptedKeys = {};
+        for (const [uid, pubKey] of Object.entries(recipientPublicKeys)) {
+            if (!pubKey) continue;
+            try {
+                const wrappedKey = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, pubKey, aesRaw);
+                encryptedKeys[uid] = btoa(String.fromCharCode(...new Uint8Array(wrappedKey)));
+            } catch (e) { console.warn('Failed to wrap key for', uid, e); }
+        }
+        return { encryptedText, encryptedKeys };
+    },
+
+    // Decrypt a message using own private key
+    async decrypt(encryptedText, encryptedKeyB64, privateKey) {
+        if (!encryptedText || !encryptedKeyB64 || !privateKey) return null;
+        try {
+            // Unwrap AES key
+            const wrappedKeyBytes = Uint8Array.from(atob(encryptedKeyB64), c => c.charCodeAt(0));
+            const aesRaw = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, wrappedKeyBytes);
+            const aesKey = await crypto.subtle.importKey('raw', aesRaw, { name: 'AES-GCM' }, false, ['decrypt']);
+
+            // Split iv + ciphertext
+            const combined = Uint8Array.from(atob(encryptedText), c => c.charCodeAt(0));
+            const iv = combined.slice(0, 12);
+            const cipher = combined.slice(12);
+            const plainBuffer = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, cipher);
+            return new TextDecoder().decode(plainBuffer);
+        } catch (e) {
+            console.warn('Decryption failed:', e);
+            return '[🔒 Encrypted — key mismatch or corrupted]';
+        }
+    }
+};
+
+// --- E2EE Key Lifecycle ---
+async function ensureKeyPair() {
+    let privKeyStr = localStorage.getItem('newsai_private_key');
+    let pubKeyStr = localStorage.getItem('newsai_public_key');
+    if (!privKeyStr || !pubKeyStr) {
+        console.log('[E2EE] Generating new RSA-2048 key pair...');
+        const kp = await CryptoEngine.generateKeyPair();
+        pubKeyStr = await CryptoEngine.exportPublicKey(kp.publicKey);
+        privKeyStr = await CryptoEngine.exportPrivateKey(kp.privateKey);
+        localStorage.setItem('newsai_public_key', pubKeyStr);
+        localStorage.setItem('newsai_private_key', privKeyStr);
+    }
+    // Upload public key to server
+    try {
+        await fetch('/keys/publish', {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ public_key_jwk: pubKeyStr })
+        });
+    } catch (e) { console.warn('[E2EE] Could not upload public key:', e); }
+    return privKeyStr;
+}
+
+async function getPrivateKey() {
+    const privKeyStr = localStorage.getItem('newsai_private_key');
+    if (!privKeyStr) return null;
+    return await CryptoEngine.importPrivateKey(privKeyStr);
+}
+
+async function getRecipientPublicKey(username) {
+    try {
+        const res = await fetch(`/keys/${username}`, { headers: getHeaders() });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return await CryptoEngine.importPublicKey(data.public_key_jwk);
+    } catch { return null; }
+}
+
+// Download private key as a .json backup file
+function downloadPrivateKey() {
+    const privKey = localStorage.getItem('newsai_private_key');
+    if (!privKey) { alert('No private key found.'); return; }
+    const blob = new Blob([privKey], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `newsai_private_key_${currentUser?.username || 'backup'}.json`;
+    a.click();
+}
 
 // Helper: Generate a high-end gradient SVG avatar dynamically
 function getAvatarUrl(avatarIndex, username = "A") {
@@ -182,7 +322,7 @@ function navigateTo(viewId) {
     if (viewId === 'home') loadHomeFeed();
     else if (viewId === 'explore') loadExploreGrid();
     else if (viewId === 'reels') loadReelsSwiper();
-    else if (viewId === 'messages') loadDMsSidebar();
+    else if (viewId === 'messages') { loadDMsSidebar(); loadGroupsSidebar(); }
     else if (viewId === 'admin') loadAdminPanel();
     else if (viewId === 'profile') loadUserProfile(currentUser.username);
 }
@@ -521,6 +661,7 @@ async function openChatWith(username) {
     }
 }
 
+
 async function loadChatLogs() {
     if (!activeChatRecipient) return;
     const logsContainer = document.getElementById('chat-logs-container');
@@ -528,55 +669,249 @@ async function loadChatLogs() {
         const response = await fetch(`/messages?with_user=${activeChatRecipient.username}`, { headers: getHeaders() });
         if (!response.ok) throw new Error();
         const messages = await response.json();
-        
-        const previousMsgCount = logsContainer.children.length;
-        
-        logsContainer.innerHTML = messages.map(msg => {
+
+        const previousMsgCount = parseInt(logsContainer.dataset.count || '0');
+        if (messages.length === previousMsgCount) return; // No new messages
+        logsContainer.dataset.count = messages.length;
+
+        const privateKey = await getPrivateKey();
+
+        // Decrypt all messages in parallel
+        const decryptedMsgs = await Promise.all(messages.map(async msg => {
             const isSent = msg.sender_id === currentUser.id;
-            return `
-                <div class="chat-bubble ${isSent ? 'sent' : 'received'}">
-                    <div>${msg.text}</div>
-                    <div class="chat-bubble-time">${formatDate(msg.created_at)}</div>
-                </div>
-            `;
-        }).join('');
-        
-        // Auto scroll to bottom only on new messages
-        if (messages.length > previousMsgCount) {
-            logsContainer.scrollTop = logsContainer.scrollHeight;
-        }
-    } catch (e) {
-        console.error(e);
-    }
+            let text = msg.text || '';
+            if (msg.is_encrypted && msg.encrypted_text) {
+                const myEncKey = isSent
+                    ? msg.encrypted_key_for_sender
+                    : msg.encrypted_key_for_recipient;
+                text = await CryptoEngine.decrypt(msg.encrypted_text, myEncKey, privateKey) || text;
+            }
+            return { ...msg, decryptedText: text, isSent };
+        }));
+
+        logsContainer.innerHTML = decryptedMsgs.map(msg => `
+            <div class="chat-bubble ${msg.isSent ? 'sent' : 'received'}">
+                <div>${msg.decryptedText || '<span class="bubble-decrypting">🔒 Decrypting...</span>'}</div>
+                <div class="chat-bubble-time">${formatDate(msg.created_at)}${msg.is_encrypted ? ' <span class="chat-bubble-lock">🔒</span>' : ''}</div>
+            </div>
+        `).join('');
+
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+    } catch (e) { console.error(e); }
 }
 
-// Send Message Action
+// Send E2EE DM
 document.getElementById('chat-send-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!activeChatRecipient) return;
-    
     const input = document.getElementById('chat-message-input');
     const text = input.value.trim();
     if (!text) return;
-    
+    input.value = '';
+
     try {
-        const response = await fetch('/messages', {
+        // Fetch recipient's public key
+        const recipientPubKey = await getRecipientPublicKey(activeChatRecipient.username);
+        const myPubKeyStr = localStorage.getItem('newsai_public_key');
+        const myPubKey = myPubKeyStr ? await CryptoEngine.importPublicKey(myPubKeyStr) : null;
+
+        let body;
+        if (recipientPubKey && myPubKey) {
+            // Encrypt for both sender (self-read) and recipient
+            const keys = {
+                [currentUser.id]: myPubKey,
+                [activeChatRecipient.id]: recipientPubKey
+            };
+            const { encryptedText, encryptedKeys } = await CryptoEngine.encrypt(text, keys);
+            body = {
+                recipient_username: activeChatRecipient.username,
+                encrypted_text: encryptedText,
+                encrypted_key_for_sender: encryptedKeys[currentUser.id],
+                encrypted_key_for_recipient: encryptedKeys[activeChatRecipient.id],
+            };
+        } else {
+            // Fallback: plaintext (recipient hasn't published a key yet)
+            body = { recipient_username: activeChatRecipient.username, text };
+        }
+
+        const res = await fetch('/messages', { method: 'POST', headers: getHeaders(), body: JSON.stringify(body) });
+        if (res.ok) await loadChatLogs();
+    } catch (e) { console.error('Send failed:', e); }
+});
+
+
+// ==========================================================================
+// GROUP CHAT
+// ==========================================================================
+
+function switchMsgTab(tab) {
+    document.getElementById('tab-dms').classList.toggle('active', tab === 'dms');
+    document.getElementById('tab-groups').classList.toggle('active', tab === 'groups');
+    document.getElementById('dm-users-list').classList.toggle('hidden', tab !== 'dms');
+    document.getElementById('groups-list').classList.toggle('hidden', tab !== 'groups');
+}
+
+async function loadGroupsSidebar() {
+    const list = document.getElementById('groups-list');
+    try {
+        const res = await fetch('/groups', { headers: getHeaders() });
+        if (!res.ok) return;
+        const groups = await res.json();
+        if (!groups.length) {
+            list.innerHTML = '<div class="empty-state">No groups yet. Create one!</div>';
+            return;
+        }
+        list.innerHTML = groups.map(g => `
+            <div class="group-item" onclick="openGroupChat('${g.id}')">
+                <div class="group-item-icon">👥</div>
+                <div class="group-item-info">
+                    <div class="group-item-name">${g.name}</div>
+                    <div class="group-item-sub">${g.member_ids.length} members · 🔒 E2EE</div>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) { console.error(e); }
+}
+
+async function openGroupChat(groupId) {
+    if (groupLogsInterval) { clearInterval(groupLogsInterval); groupLogsInterval = null; }
+    if (chatLogsInterval) { clearInterval(chatLogsInterval); chatLogsInterval = null; }
+
+    try {
+        const res = await fetch(`/groups/${groupId}`, { headers: getHeaders() });
+        if (!res.ok) throw new Error();
+        activeGroupChat = await res.json();
+
+        // Show group pane
+        document.getElementById('chat-pane-empty').classList.add('hidden');
+        document.getElementById('chat-pane-active').classList.add('hidden');
+        document.getElementById('group-chat-pane').classList.remove('hidden');
+
+        document.getElementById('group-chat-name').textContent = activeGroupChat.name;
+        document.getElementById('group-chat-members-count').textContent =
+            `${activeGroupChat.member_ids.length} members · 🔒 End-to-End Encrypted`;
+
+        await loadGroupMessages();
+        groupLogsInterval = setInterval(loadGroupMessages, 2500);
+    } catch (e) { console.error('Open group failed:', e); }
+}
+
+async function loadGroupMessages() {
+    if (!activeGroupChat) return;
+    const logsContainer = document.getElementById('group-logs-container');
+    try {
+        const res = await fetch(`/groups/${activeGroupChat.id}/messages`, { headers: getHeaders() });
+        if (!res.ok) throw new Error();
+        const messages = await res.json();
+
+        const previousCount = parseInt(logsContainer.dataset.count || '0');
+        if (messages.length === previousCount) return;
+        logsContainer.dataset.count = messages.length;
+
+        const privateKey = await getPrivateKey();
+
+        // Build member map for display names
+        const memberMap = {};
+        (activeGroupChat.members || []).forEach(m => { memberMap[m.id] = m; });
+
+        const decryptedMsgs = await Promise.all(messages.map(async msg => {
+            const isSent = msg.sender_id === currentUser.id;
+            let text = '';
+            if (msg.encrypted_text && msg.encrypted_keys) {
+                const myEncKey = msg.encrypted_keys[currentUser.id];
+                text = await CryptoEngine.decrypt(msg.encrypted_text, myEncKey, privateKey) || '🔒 Encrypted';
+            }
+            const senderName = memberMap[msg.sender_id]?.display_name || msg.sender_username || 'Unknown';
+            return { ...msg, decryptedText: text, isSent, senderName };
+        }));
+
+        logsContainer.innerHTML = decryptedMsgs.map(msg => `
+            <div class="chat-bubble ${msg.isSent ? 'sent' : 'received'}">
+                ${!msg.isSent ? `<div style="font-size:10px; color:var(--accent-cyan); margin-bottom:2px; font-weight:600;">${msg.senderName}</div>` : ''}
+                <div>${msg.decryptedText}</div>
+                <div class="chat-bubble-time">${formatDate(msg.created_at)} <span class="chat-bubble-lock">🔒</span></div>
+            </div>
+        `).join('');
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+    } catch (e) { console.error(e); }
+}
+
+// Send Group E2EE Message
+document.getElementById('group-send-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!activeGroupChat) return;
+    const input = document.getElementById('group-message-input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+
+    try {
+        // Fetch all member public keys
+        const members = activeGroupChat.members || [];
+        const recipientKeys = {};
+        await Promise.all(members.map(async m => {
+            if (m.public_key_jwk) {
+                try { recipientKeys[m.id] = await CryptoEngine.importPublicKey(m.public_key_jwk); }
+                catch (e) { console.warn('Bad public key for', m.username); }
+            }
+        }));
+
+        const { encryptedText, encryptedKeys } = await CryptoEngine.encrypt(text, recipientKeys);
+        await fetch(`/groups/${activeGroupChat.id}/messages`, {
             method: 'POST',
             headers: getHeaders(),
-            body: JSON.stringify({
-                recipient_username: activeChatRecipient.username,
-                text: text
-            })
+            body: JSON.stringify({ encrypted_text: encryptedText, encrypted_keys: encryptedKeys })
         });
-        
-        if (response.ok) {
-            input.value = '';
-            await loadChatLogs();
+        await loadGroupMessages();
+    } catch (e) { console.error('Group send failed:', e); }
+});
+
+// New Group Modal
+document.getElementById('btn-new-group').addEventListener('click', () => {
+    const modal = document.getElementById('new-group-modal');
+    modal.style.display = 'flex';
+    requestAnimationFrame(() => modal.classList.add('active'));
+});
+
+function closeGroupModal() {
+    const modal = document.getElementById('new-group-modal');
+    modal.classList.remove('active');
+    setTimeout(() => { modal.style.display = 'none'; }, 320);
+}
+
+document.getElementById('form-create-group').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('group-name-input').value.trim();
+    const membersRaw = document.getElementById('group-members-input').value;
+    const members = membersRaw.split(',').map(s => s.trim()).filter(Boolean);
+    const errEl = document.getElementById('group-create-error');
+    errEl.classList.add('hidden');
+
+    try {
+        const res = await fetch('/groups', {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ name, members })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            errEl.textContent = data.detail || 'Failed to create group.';
+            errEl.classList.remove('hidden');
+            return;
         }
-    } catch (e) {
-        console.error(e);
+        // Clear form, close modal, refresh groups, open the new group
+        document.getElementById('group-name-input').value = '';
+        document.getElementById('group-members-input').value = '';
+        closeGroupModal();
+        switchMsgTab('groups');
+        await loadGroupsSidebar();
+        await openGroupChat(data.id);
+    } catch (err) {
+        errEl.textContent = 'Network error. Please try again.';
+        errEl.classList.remove('hidden');
     }
 });
+
 
 
 // --- 5. VIEW: PROFILE PAGE ---
@@ -1376,6 +1711,7 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
             setSessionToken(data.token, data.user);
             document.getElementById('form-login').reset();
             await checkAuth();
+            ensureKeyPair(); // Generate E2EE key pair and publish public key
         } else {
             const err = await response.json();
             alert("Login failed: " + (err.detail || "Invalid credentials"));

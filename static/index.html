@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NewsAI - Verified Social Feed</title>
-    <link rel="stylesheet" href="/static/style.css?v=1.0.3">
+    <link rel="stylesheet" href="/static/style.css?v=1.0.4">
     <!-- Google Fonts for premium typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -145,24 +145,45 @@
             <!-- VIEW: MESSAGES (DMs WINDOW) -->
             <section id="view-messages" class="view-section hidden">
                 <div class="messages-container card">
+
+                    <!-- Sidebar -->
                     <div class="messages-users-sidebar">
                         <div class="sidebar-header">
-                            <h3>Direct Messages</h3>
+                            <h3>Messages</h3>
+                            <button class="btn btn-glow btn-sm" id="btn-new-group" title="New Group Chat">
+                                <svg width="14" height="14" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM6 8a2 2 0 11-4 0 2 2 0 014 0zM10 14a5 5 0 00-5 5h10a5 5 0 00-5-5zM16 13a4 4 0 014 4H18a2 2 0 00-2-2h-1.18A5.01 5.01 0 0016 13zM4 13a4 4 0 00-4 4h2a2 2 0 012-2H5.18A5.01 5.01 0 004 13z"/></svg>
+                                New Group
+                            </button>
                         </div>
-                        <div class="users-dm-list" id="dm-users-list">
-                            <!-- Populated with users -->
-                            <div class="empty-state">No other users online yet.</div>
+
+                        <!-- DM / Group Tabs -->
+                        <div class="msg-tabs">
+                            <button class="msg-tab active" id="tab-dms" onclick="switchMsgTab('dms')">💬 DMs</button>
+                            <button class="msg-tab" id="tab-groups" onclick="switchMsgTab('groups')">👥 Groups</button>
                         </div>
-                    </div>
-                    
-                    <div class="messages-chat-pane" id="chat-pane-empty">
-                        <div class="empty-chat-state">
-                            <div class="chat-icon-sphere">✉</div>
-                            <h3>Your Messages</h3>
-                            <p>Send text messages to other members of NewsAI.</p>
+
+                        <!-- DM List -->
+                        <div id="dm-users-list" class="users-dm-list">
+                            <div class="empty-state">No conversations yet.</div>
+                        </div>
+
+                        <!-- Group List -->
+                        <div id="groups-list" class="users-dm-list hidden">
+                            <div class="empty-state">No groups yet. Create one!</div>
                         </div>
                     </div>
 
+                    <!-- Empty State -->
+                    <div class="messages-chat-pane" id="chat-pane-empty">
+                        <div class="empty-chat-state">
+                            <div class="chat-icon-sphere">🔒</div>
+                            <h3>End-to-End Encrypted</h3>
+                            <p>Messages are encrypted in your browser.<br>Only you and your recipients can read them.</p>
+                            <div class="e2e-badge-info">🔐 E2EE Active — Server sees only ciphertext</div>
+                        </div>
+                    </div>
+
+                    <!-- Active DM Chat Pane -->
                     <div class="messages-chat-pane hidden" id="chat-pane-active">
                         <div class="chat-header">
                             <img src="" alt="Avatar" class="avatar-sm" id="chat-recipient-avatar">
@@ -170,22 +191,73 @@
                                 <h4 id="chat-recipient-name">Recipient Name</h4>
                                 <p id="chat-recipient-handle">@handle</p>
                             </div>
-                            <button class="btn btn-follow-toggle" id="chat-profile-follow-btn" style="margin-left: auto; padding: 4px 10px; font-size: 11px;">
-                                Follow
-                            </button>
+                            <span class="e2e-lock-badge" title="End-to-End Encrypted">🔒 E2EE</span>
+                            <button class="btn btn-follow-toggle" id="chat-profile-follow-btn" style="margin-left:auto; padding:4px 10px; font-size:11px;">Follow</button>
                         </div>
-                        
-                        <div class="chat-logs" id="chat-logs-container">
-                            <!-- Messages populated dynamically -->
-                        </div>
-                        
+                        <div class="chat-logs" id="chat-logs-container"></div>
                         <form class="chat-input-form" id="chat-send-form">
-                            <input type="text" id="chat-message-input" required placeholder="Write a message...">
-                            <button type="submit" class="btn btn-glow">Send</button>
+                            <input type="text" id="chat-message-input" required placeholder="Write an encrypted message...">
+                            <button type="submit" class="btn btn-glow">
+                                <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Active Group Chat Pane -->
+                    <div class="messages-chat-pane hidden" id="group-chat-pane">
+                        <div class="chat-header">
+                            <div class="group-avatar-icon">👥</div>
+                            <div>
+                                <h4 id="group-chat-name">Group Name</h4>
+                                <p id="group-chat-members-count">0 members</p>
+                            </div>
+                            <span class="e2e-lock-badge" title="End-to-End Encrypted">🔒 E2EE</span>
+                        </div>
+                        <div class="chat-logs" id="group-logs-container"></div>
+                        <form class="chat-input-form" id="group-send-form">
+                            <input type="text" id="group-message-input" required placeholder="Write an encrypted group message...">
+                            <button type="submit" class="btn btn-glow">
+                                <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+                            </button>
                         </form>
                     </div>
                 </div>
+
+                <!-- Key Backup Warning Banner -->
+                <div class="e2e-warning-banner" id="e2e-warning-banner">
+                    <span>⚠️ Your private encryption key is stored only in this browser. <strong>Clear your browser data = lose access to old messages.</strong></span>
+                    <button class="btn btn-sm" onclick="downloadPrivateKey()">💾 Backup Key</button>
+                    <button class="btn-close-x" onclick="document.getElementById('e2e-warning-banner').style.display='none'">✕</button>
+                </div>
             </section>
+
+            <!-- NEW GROUP MODAL -->
+            <div class="modal-overlay" id="new-group-modal">
+                <div class="auth-card card" style="max-width:440px; width:100%;">
+                    <div class="auth-header">
+                        <h2>👥 New Group Chat</h2>
+                        <p>Create an end-to-end encrypted group</p>
+                    </div>
+                    <div class="card-body" style="padding: 24px;">
+                        <form id="form-create-group">
+                            <div class="input-group">
+                                <label for="group-name-input">Group Name</label>
+                                <input type="text" id="group-name-input" placeholder="e.g. NewsAI Team" required>
+                            </div>
+                            <div class="input-group">
+                                <label for="group-members-input">Add Members (comma-separated usernames)</label>
+                                <input type="text" id="group-members-input" placeholder="e.g. alice, bob, charlie">
+                                <small style="color: var(--text-muted); margin-top: 4px; display:block;">You will be added automatically. Max 50 members.</small>
+                            </div>
+                            <div id="group-create-error" class="form-error hidden"></div>
+                            <div style="display: flex; gap: 10px; margin-top: 16px;">
+                                <button type="button" class="btn" style="flex:1;" onclick="closeGroupModal()">Cancel</button>
+                                <button type="submit" class="btn btn-glow" style="flex:2;">Create Encrypted Group</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
 
             <!-- VIEW: CREATE (UPLOADS & INGESTION) -->
             <section id="view-create" class="view-section hidden">
@@ -611,6 +683,6 @@
     </div>
 
     <!-- Frontend controller script -->
-    <script src="/static/app.js?v=1.0.4" defer></script>
+    <script src="/static/app.js?v=1.0.5" defer></script>
 </body>
 </html>
