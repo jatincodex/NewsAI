@@ -195,30 +195,51 @@ def initialize_firebase():
     if _firebase_initialized:
         return _db_client
 
-    # Check for credentials in the environment
-    proj_id = os.getenv("FIREBASE_PROJECT_ID")
-    client_email = os.getenv("FIREBASE_CLIENT_EMAIL")
-    private_key = os.getenv("FIREBASE_PRIVATE_KEY")
+    cred_dict = None
 
-    if proj_id and client_email and private_key:
+    # Option A: Full JSON key as single env var (FIREBASE_CREDENTIALS_JSON)
+    # Easiest — paste the entire service account JSON as one env var
+    cred_json_str = os.getenv("FIREBASE_CREDENTIALS_JSON")
+    if cred_json_str:
         try:
-            logger.info("Initializing Google Firebase Admin SDK with project credentials.")
+            cred_dict = json.loads(cred_json_str)
+            logger.info("Firebase: Using FIREBASE_CREDENTIALS_JSON env var.")
+        except Exception as e:
+            logger.error(f"Failed to parse FIREBASE_CREDENTIALS_JSON: {e}")
+
+    # Option B: Individual env vars (FIREBASE_PROJECT_ID + CLIENT_EMAIL + PRIVATE_KEY)
+    if not cred_dict:
+        proj_id = os.getenv("FIREBASE_PROJECT_ID")
+        client_email = os.getenv("FIREBASE_CLIENT_EMAIL")
+        private_key = os.getenv("FIREBASE_PRIVATE_KEY")
+
+        if proj_id and client_email and private_key:
             cred_dict = {
                 "type": "service_account",
                 "project_id": proj_id,
                 "private_key": private_key.replace("\\n", "\n"),
-                "client_email": client_email
+                "client_email": client_email,
+                "token_uri": "https://oauth2.googleapis.com/token",
             }
-            cred = credentials.Certificate(cred_dict)
-            firebase_admin.initialize_app(cred)
+            logger.info("Firebase: Using individual FIREBASE_* env vars.")
+
+    # Attempt real Firebase connection
+    if cred_dict:
+        try:
+            logger.info(f"Connecting to Firebase Firestore project: {cred_dict.get('project_id')}")
+            if not firebase_admin._apps:
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
             _db_client = firestore.client()
             _firebase_initialized = True
+            logger.info("✅ Firebase Firestore connected — permanent cloud storage ACTIVE.")
             return _db_client
         except Exception as e:
-            logger.exception(f"Firebase Admin SDK initialization failed: {e}. Falling back to SQLite-backed Mock Firestore.")
+            logger.exception(f"Firebase SDK init failed: {e}. Falling back to SQLite mock.")
 
-    # Fallback to local Mock DB client
-    logger.info("Using SQLite-backed Mock Firestore client fallback.")
+    # Fallback: Local SQLite-backed mock Firestore
+    logger.warning("⚠️  No Firebase credentials found. Using SQLite mock — data resets on restart!")
+    logger.warning("   To use permanent storage, create a .env file with FIREBASE_CREDENTIALS_JSON")
     _db_client = MockFirestoreClient()
     _firebase_initialized = True
     return _db_client
