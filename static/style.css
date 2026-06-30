@@ -1623,3 +1623,97 @@ body.dark-mode {
     font-size: 12px;
     margin-top: 8px;
 }
+
+/* ==========================================================================
+   Home Feed Grid & Suggested Users Sidebar
+   ========================================================================== */
+.feed-sidebar {
+    display: none;
+}
+
+@media (min-width: 992px) {
+    .feed-container {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 32px;
+        max-width: 960px;
+        margin: 0 auto;
+    }
+    
+    .feed-sidebar {
+        display: block;
+        position: sticky;
+        top: 30px;
+        height: fit-content;
+    }
+}
+
+.sidebar-card {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.sidebar-card-header {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 12px;
+}
+
+.sidebar-card-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-primary);
+}
+
+.suggested-users-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.suggested-user-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.suggested-user-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.suggested-user-details {
+    min-width: 0;
+}
+
+.suggested-user-details h4 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.suggested-user-details p {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.btn-follow-xs {
+    padding: 5px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 20px;
+    cursor: pointer;
+}
+

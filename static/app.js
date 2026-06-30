@@ -429,6 +429,74 @@ async function loadHomeFeed() {
     } catch {
         list.innerHTML = '<div class="empty-state">Failed to load feed. Make sure the backend server is running!</div>';
     }
+    await loadSuggestedUsers();
+}
+
+// Suggested Users Recommendations Sidebar Loader
+async function loadSuggestedUsers() {
+    const container = document.getElementById('suggested-users-container');
+    if (!container) return;
+    try {
+        const response = await fetch('/users', { headers: getHeaders() });
+        if (!response.ok) throw new Error();
+        const users = await response.json();
+
+        // Exclude current user and take top 5 recommendations
+        const filtered = users.filter(u => u.username !== currentUser.username).slice(0, 5);
+
+        if (filtered.length === 0) {
+            container.innerHTML = '<div class="empty-state">No recommendations yet.</div>';
+            return;
+        }
+
+        // Load details for each to get following status
+        const rows = await Promise.all(filtered.map(async u => {
+            const pRes = await fetch(`/users/${u.username}/profile`, { headers: getHeaders() });
+            if (!pRes.ok) return null;
+            const profile = await pRes.json();
+            const userAvatar = getAvatarUrl(profile.avatar_index, profile.username);
+            return `
+                <div class="suggested-user-row">
+                    <div class="suggested-user-info" onclick="loadUserProfile('${profile.username}')">
+                        <img src="${userAvatar}" alt="Avatar" class="avatar-sm">
+                        <div class="suggested-user-details">
+                            <h4>${profile.display_name || profile.username}</h4>
+                            <p>@${profile.username}</p>
+                        </div>
+                    </div>
+                    <button class="btn btn-follow-xs ${profile.is_following ? '' : 'btn-glow'}" 
+                            onclick="toggleFollowSuggested('${profile.username}', this)">
+                        ${profile.is_following ? 'Following' : 'Follow'}
+                    </button>
+                </div>
+            `;
+        }));
+
+        container.innerHTML = rows.filter(Boolean).join('');
+    } catch (e) {
+        container.innerHTML = '<div class="empty-state">Failed to load suggestions.</div>';
+    }
+}
+
+async function toggleFollowSuggested(username, btn) {
+    try {
+        const res = await fetch(`/users/${username}/follow`, {
+            method: 'POST',
+            headers: getHeaders()
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const isFollowing = data.status === 'followed';
+            btn.textContent = isFollowing ? 'Following' : 'Follow';
+            btn.className = `btn btn-follow-xs ${isFollowing ? '' : 'btn-glow'}`;
+            // Refresh profile view stats if open
+            if (activeView === 'profile') {
+                loadUserProfile(username);
+            }
+        }
+    } catch (e) {
+        console.error('Follow failed:', e);
+    }
 }
 
 // Like Post Toggle
