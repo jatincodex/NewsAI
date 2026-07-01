@@ -1287,27 +1287,398 @@ sandboxTab.addEventListener('click', () => {
     paneCreateCustom.classList.add('hidden');
 });
 
+// Media Editor & Camera State Variables
+let selectedMediaFile = null; 
+let selectedMediaType = null; 
+let cameraStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let cameraFacingMode = "environment"; 
+let cameraMode = "photo"; 
+let isRecordingVideo = false;
+let recordingTimerInterval = null;
+let recordingSeconds = 0;
+
+let editBrightness = 100;
+let editContrast = 100;
+let editSaturation = 100;
+let editFilterPreset = "normal";
+
+// Triggers for media selection
+document.getElementById('btn-gallery-select').addEventListener('click', () => {
+    document.getElementById('custom-post-file').click();
+});
+
+document.getElementById('custom-post-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) handlePickedMedia(file);
+});
+
+document.getElementById('btn-remove-media').addEventListener('click', () => {
+    resetMediaEditor();
+});
+
+function handlePickedMedia(file) {
+    selectedMediaFile = file;
+    const type = file.type.startsWith('video') ? 'video' : 'image';
+    selectedMediaType = type;
+
+    const editorPanel = document.getElementById('media-editor-panel');
+    const imgPreview = document.getElementById('editor-image-preview');
+    const vidPreview = document.getElementById('editor-video-preview');
+    const adjustControls = document.getElementById('image-adjustments-controls');
+    const filterPresets = document.getElementById('image-filters-presets');
+
+    editorPanel.classList.remove('hidden');
+    const fileUrl = URL.createObjectURL(file);
+
+    if (type === 'image') {
+        imgPreview.src = fileUrl;
+        imgPreview.classList.remove('hidden');
+        vidPreview.classList.add('hidden');
+        vidPreview.src = '';
+        
+        adjustControls.classList.remove('hidden');
+        filterPresets.classList.remove('hidden');
+        resetAdjustments();
+    } else {
+        vidPreview.src = fileUrl;
+        vidPreview.classList.remove('hidden');
+        imgPreview.classList.add('hidden');
+        imgPreview.src = '';
+        
+        adjustControls.classList.add('hidden');
+        filterPresets.classList.add('hidden');
+    }
+}
+
+// Sliders and filters binding
+document.getElementById('slider-brightness').addEventListener('input', (e) => {
+    editBrightness = e.target.value;
+    document.getElementById('val-brightness').innerText = editBrightness + '%';
+    applyCSSFilters();
+});
+
+document.getElementById('slider-contrast').addEventListener('input', (e) => {
+    editContrast = e.target.value;
+    document.getElementById('val-contrast').innerText = editContrast + '%';
+    applyCSSFilters();
+});
+
+document.getElementById('slider-saturation').addEventListener('input', (e) => {
+    editSaturation = e.target.value;
+    document.getElementById('val-saturation').innerText = editSaturation + '%';
+    applyCSSFilters();
+});
+
+document.querySelectorAll('#image-filters-presets .btn-preset').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        document.querySelectorAll('#image-filters-presets .btn-preset').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        editFilterPreset = e.target.getAttribute('data-filter');
+        applyCSSFilters();
+    });
+});
+
+function applyCSSFilters() {
+    const previewEl = document.getElementById('editor-image-preview');
+    if (!previewEl) return;
+    
+    let filterString = `brightness(${editBrightness}%) contrast(${editContrast}%) saturate(${editSaturation}%)`;
+    if (editFilterPreset === 'grayscale') {
+        filterString += ' grayscale(100%)';
+    } else if (editFilterPreset === 'sepia') {
+        filterString += ' sepia(100%)';
+    } else if (editFilterPreset === 'vintage') {
+        filterString += ' sepia(50%) hue-rotate(-30deg) saturate(120%)';
+    }
+    previewEl.style.filter = filterString;
+}
+
+function resetAdjustments() {
+    editBrightness = 100;
+    editContrast = 100;
+    editSaturation = 100;
+    editFilterPreset = 'normal';
+    
+    document.getElementById('slider-brightness').value = 100;
+    document.getElementById('slider-contrast').value = 100;
+    document.getElementById('slider-saturation').value = 100;
+    
+    document.getElementById('val-brightness').innerText = '100%';
+    document.getElementById('val-contrast').innerText = '100%';
+    document.getElementById('val-saturation').innerText = '100%';
+    
+    document.querySelectorAll('#image-filters-presets .btn-preset').forEach(b => {
+        b.classList.remove('active');
+        if (b.getAttribute('data-filter') === 'normal') b.classList.add('active');
+    });
+    
+    const previewEl = document.getElementById('editor-image-preview');
+    if (previewEl) previewEl.style.filter = 'none';
+}
+
+function resetMediaEditor() {
+    selectedMediaFile = null;
+    selectedMediaType = null;
+    
+    document.getElementById('media-editor-panel').classList.add('hidden');
+    document.getElementById('custom-post-file').value = '';
+    
+    const imgPreview = document.getElementById('editor-image-preview');
+    const vidPreview = document.getElementById('editor-video-preview');
+    imgPreview.src = '';
+    imgPreview.classList.add('hidden');
+    vidPreview.src = '';
+    vidPreview.classList.add('hidden');
+}
+
+// Camera control overlay functions
+document.getElementById('btn-camera-capture').addEventListener('click', async () => {
+    const modal = document.getElementById('camera-capture-modal');
+    modal.classList.add('active');
+    try {
+        await startCameraStream();
+    } catch (e) {
+        alert("Could not access camera device.");
+        modal.classList.remove('active');
+    }
+});
+
+document.getElementById('btn-close-camera').addEventListener('click', () => {
+    stopCameraStream();
+    document.getElementById('camera-capture-modal').classList.remove('active');
+});
+
+async function startCameraStream() {
+    if (cameraStream) stopCameraStream();
+    const constraints = {
+        video: { facingMode: cameraFacingMode },
+        audio: cameraMode === 'video'
+    };
+    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+    document.getElementById('camera-stream-video').srcObject = cameraStream;
+}
+
+function stopCameraStream() {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+    }
+    const videoEl = document.getElementById('camera-stream-video');
+    if (videoEl) videoEl.srcObject = null;
+    stopVideoRecordingTimer();
+}
+
+document.getElementById('btn-camera-switch').addEventListener('click', async () => {
+    cameraFacingMode = (cameraFacingMode === 'user') ? 'environment' : 'user';
+    await startCameraStream();
+});
+
+document.getElementById('btn-camera-mode').addEventListener('click', async (e) => {
+    cameraMode = (cameraMode === 'photo') ? 'video' : 'photo';
+    e.target.innerText = cameraMode === 'photo' ? '📸 Mode: Photo' : '🔴 Mode: Reel';
+    
+    const shutterInner = document.querySelector('#btn-shutter-trigger .shutter-button-inner');
+    if (cameraMode === 'photo') {
+        shutterInner.style.background = '#fff';
+        shutterInner.style.borderRadius = '50%';
+    } else {
+        shutterInner.style.background = '#ef4444';
+        shutterInner.style.borderRadius = '50%';
+    }
+    await startCameraStream();
+});
+
+document.getElementById('btn-shutter-trigger').addEventListener('click', () => {
+    if (cameraMode === 'photo') {
+        capturePhotoFrame();
+    } else {
+        if (!isRecordingVideo) {
+            startVideoRecording();
+        } else {
+            stopVideoRecording();
+        }
+    }
+});
+
+function capturePhotoFrame() {
+    const videoEl = document.getElementById('camera-stream-video');
+    const canvas = document.createElement('canvas');
+    canvas.width = videoEl.videoWidth || 640;
+    canvas.height = videoEl.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    
+    if (cameraFacingMode === 'user') {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+    }
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    
+    canvas.toBlob((blob) => {
+        const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' });
+        handlePickedMedia(file);
+        stopCameraStream();
+        document.getElementById('camera-capture-modal').classList.remove('active');
+    }, 'image/jpeg', 0.95);
+}
+
+function startVideoRecording() {
+    if (!cameraStream) return;
+    recordedChunks = [];
+    isRecordingVideo = true;
+    
+    const shutter = document.getElementById('btn-shutter-trigger');
+    shutter.classList.add('recording');
+    document.getElementById('camera-status-label').classList.remove('hidden');
+    startVideoRecordingTimer();
+    
+    let options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/webm;codecs=vp8,opus' };
+    }
+    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/mp4' };
+    }
+    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = {};
+    }
+    
+    try {
+        mediaRecorder = new MediaRecorder(cameraStream, options);
+    } catch (e) {
+        mediaRecorder = new MediaRecorder(cameraStream);
+    }
+    
+    mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+            recordedChunks.push(event.data);
+        }
+    };
+    
+    mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/mp4' });
+        const file = new File([blob], `reel_${Date.now()}.mp4`, { type: blob.type });
+        handlePickedMedia(file);
+        stopCameraStream();
+        document.getElementById('camera-capture-modal').classList.remove('active');
+    };
+    mediaRecorder.start(100);
+}
+
+function stopVideoRecording() {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+    mediaRecorder.stop();
+    isRecordingVideo = false;
+    
+    const shutter = document.getElementById('btn-shutter-trigger');
+    shutter.classList.remove('recording');
+    document.getElementById('camera-status-label').classList.add('hidden');
+    stopVideoRecordingTimer();
+}
+
+function startVideoRecordingTimer() {
+    recordingSeconds = 0;
+    document.getElementById('camera-status-timer').innerText = '00:00';
+    clearInterval(recordingTimerInterval);
+    recordingTimerInterval = setInterval(() => {
+        recordingSeconds++;
+        const mins = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
+        const secs = (recordingSeconds % 60).toString().padStart(2, '0');
+        document.getElementById('camera-status-timer').innerText = `${mins}:${secs}`;
+    }, 1000);
+}
+
+function stopVideoRecordingTimer() {
+    clearInterval(recordingTimerInterval);
+    recordingTimerInterval = null;
+    recordingSeconds = 0;
+    const statusLabel = document.getElementById('camera-status-label');
+    if (statusLabel) statusLabel.classList.add('hidden');
+}
+
+// Bake filters to image blob
+function bakeFiltersAndGetBlob(file) {
+    return new Promise((resolve) => {
+        if (selectedMediaType !== 'image' || (editFilterPreset === 'normal' && editBrightness == 100 && editContrast == 100 && editSaturation == 100)) {
+            resolve(file);
+            return;
+        }
+        
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            const ctx = canvas.getContext('2d');
+            
+            let filterString = `brightness(${editBrightness}%) contrast(${editContrast}%) saturate(${editSaturation}%)`;
+            if (editFilterPreset === 'grayscale') {
+                filterString += ' grayscale(100%)';
+            } else if (editFilterPreset === 'sepia') {
+                filterString += ' sepia(100%)';
+            } else if (editFilterPreset === 'vintage') {
+                filterString += ' sepia(50%) hue-rotate(-30deg) saturate(120%)';
+            }
+            
+            ctx.filter = filterString;
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((blob) => {
+                const bakedFile = new File([blob], file.name || 'edited_image.jpg', { type: 'image/jpeg' });
+                resolve(bakedFile);
+            }, 'image/jpeg', 0.95);
+        };
+        img.onerror = () => {
+            resolve(file);
+        };
+    });
+}
+
 // Custom post submit action
 document.getElementById('form-create-custom').addEventListener('submit', async (e) => {
     e.preventDefault();
     const content = document.getElementById('custom-post-content').value.trim();
     if (!content) return;
     
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerText;
+    submitBtn.innerText = "Verifying & Publishing...";
+    submitBtn.disabled = true;
+    
     try {
-        const response = await fetch(`/posts/create?content=${encodeURIComponent(content)}`, {
+        const formData = new FormData();
+        formData.append("content", content);
+        
+        if (selectedMediaFile) {
+            const finalFile = await bakeFiltersAndGetBlob(selectedMediaFile);
+            formData.append("file", finalFile);
+        }
+        
+        const headers = { ...getHeaders() };
+        delete headers['Content-Type'];
+        
+        const response = await fetch('/posts/create', {
             method: 'POST',
-            headers: getHeaders()
+            headers: headers,
+            body: formData
         });
+        
         if (response.ok) {
             document.getElementById('custom-post-content').value = '';
+            resetMediaEditor();
             alert("Custom post submitted to fact-checking pipeline. We will verify and publish it!");
             navigateTo('home');
         } else {
             const err = await response.json();
             alert("Error publishing post: " + (err.detail || response.statusText));
         }
-    } catch {
+    } catch (err) {
+        console.error(err);
         alert("Network error publishing post.");
+    } finally {
+        submitBtn.innerText = originalText;
+        submitBtn.disabled = false;
     }
 });
 

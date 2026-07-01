@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi import FastAPI, Depends, HTTPException, status, Header, Form, File, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -385,8 +385,37 @@ def ingest_social_post(payload: dict, current_user: Optional[dict] = Depends(get
     return post_data
 
 @app.post("/posts/create", status_code=status.HTTP_201_CREATED)
-def create_custom_post(content: str, user: dict = Depends(require_user)):
+def create_custom_post(
+    content: str = Form(...),
+    file: Optional[UploadFile] = File(None),
+    user: dict = Depends(require_user)
+):
     post_id = f"custom_{uuid.uuid4().hex[:8]}"
+    image_path = None
+    video_path = None
+    
+    if file:
+        file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
+        content_type = file.content_type or ""
+        
+        # Save image or video
+        if "video" in content_type or file_ext in [".mp4", ".mov", ".avi", ".webm"]:
+            filename = f"vid_{post_id}{file_ext or '.mp4'}"
+            video_path = str(settings.GENERATED_VIDEOS_DIR / filename)
+            try:
+                with open(video_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to save video: {e}")
+        else:
+            filename = f"img_{post_id}{file_ext or '.jpg'}"
+            image_path = str(settings.GENERATED_IMAGES_DIR / filename)
+            try:
+                with open(image_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to save image: {e}")
+
     post_data = {
         "id": post_id,
         "post_id": post_id,
@@ -401,8 +430,8 @@ def create_custom_post(content: str, user: dict = Depends(require_user)):
         "accuracy_percentage": None,
         "fact_check_report": None,
         "status": "pending",
-        "video_path": None,
-        "image_path": None,
+        "video_path": video_path,
+        "image_path": image_path,
         "user_id": user["id"],
         "created_at": datetime.now(timezone.utc).isoformat()
     }

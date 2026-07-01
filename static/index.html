@@ -321,6 +321,63 @@
                                     <label for="custom-post-content">Write your story details</label>
                                     <textarea id="custom-post-content" required rows="5" placeholder="Type verified news details to publish on the platform..."></textarea>
                                 </div>
+
+                                <!-- Media Selection Triggers -->
+                                <div class="media-creation-bar" style="display: flex; gap: 12px; margin-bottom: 20px;">
+                                    <input type="file" id="custom-post-file" accept="image/*,video/*" style="display: none;">
+                                    <button type="button" class="btn btn-preset" id="btn-gallery-select" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                        🖼️ Gallery Select
+                                    </button>
+                                    <button type="button" class="btn btn-preset btn-glow" id="btn-camera-capture" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                        📸 Take Photo/Reel
+                                    </button>
+                                </div>
+
+                                <!-- Media Preview & Adjustments Dashboard -->
+                                <div id="media-editor-panel" class="hidden" style="margin-bottom: 20px; border-top: 1px solid var(--border-glass); padding-top: 16px;">
+                                    <h4 style="font-size: 12px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">🎨 Media Editor & Quality Enhancer</h4>
+                                    
+                                    <!-- Preview frame -->
+                                    <div class="preview-media-frame" style="width: 100%; max-height: 320px; display: flex; justify-content: center; align-items: center; background: rgba(0,0,0,0.3); border-radius: 8px; overflow: hidden; position: relative; margin-bottom: 16px; border: 1px solid var(--border-glass);">
+                                        <img id="editor-image-preview" src="" alt="Selected Image" class="hidden" style="max-width: 100%; max-height: 320px; object-fit: contain; transition: filter 0.1s ease;">
+                                        <video id="editor-video-preview" src="" class="hidden" controls autoplay loop playsinline style="max-width: 100%; max-height: 320px; object-fit: contain; transition: filter 0.1s ease;"></video>
+                                        <button type="button" class="phone-close-btn" id="btn-remove-media" style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; color: #fff; cursor: pointer; font-size: 16px;">&times;</button>
+                                    </div>
+
+                                    <!-- Sliders (Only visible for Images) -->
+                                    <div id="image-adjustments-controls" class="editing-sliders-grid" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
+                                        <div class="slider-group" style="display: flex; flex-direction: column; gap: 4px;">
+                                            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">
+                                                <span>Brightness</span>
+                                                <span id="val-brightness">100%</span>
+                                            </div>
+                                            <input type="range" id="slider-brightness" min="50" max="150" value="100" style="width:100%; background:rgba(255,255,255,0.1); accent-color:var(--accent-cyan);">
+                                        </div>
+                                        <div class="slider-group" style="display: flex; flex-direction: column; gap: 4px;">
+                                            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">
+                                                <span>Contrast</span>
+                                                <span id="val-contrast">100%</span>
+                                            </div>
+                                            <input type="range" id="slider-contrast" min="50" max="150" value="100" style="width:100%; background:rgba(255,255,255,0.1); accent-color:var(--accent-cyan);">
+                                        </div>
+                                        <div class="slider-group" style="display: flex; flex-direction: column; gap: 4px;">
+                                            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">
+                                                <span>Saturation</span>
+                                                <span id="val-saturation">100%</span>
+                                            </div>
+                                            <input type="range" id="slider-saturation" min="50" max="150" value="100" style="width:100%; background:rgba(255,255,255,0.1); accent-color:var(--accent-cyan);">
+                                        </div>
+                                    </div>
+
+                                    <!-- Filters Presets row -->
+                                    <div class="presets-row" id="image-filters-presets" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+                                        <button type="button" class="btn btn-preset active" data-filter="normal" style="padding: 6px 12px; font-size: 11px;">Normal</button>
+                                        <button type="button" class="btn btn-preset" data-filter="grayscale" style="padding: 6px 12px; font-size: 11px;">B&W</button>
+                                        <button type="button" class="btn btn-preset" data-filter="sepia" style="padding: 6px 12px; font-size: 11px;">Sepia</button>
+                                        <button type="button" class="btn btn-preset" data-filter="vintage" style="padding: 6px 12px; font-size: 11px;">Vintage</button>
+                                    </div>
+                                </div>
+
                                 <button type="submit" class="btn btn-glow btn-block">Publish Post</button>
                             </form>
                         </div>
@@ -918,6 +975,48 @@
                     Cancel
                 </button>
             </form>
+        </div>
+    </div>
+
+    <!-- OVERLAY: CAMERA CAPTURE VIEWPORT MODAL (Mobile Safe getUserMedia Frame) -->
+    <div id="camera-capture-modal" class="modal-overlay">
+        <div class="phone-frame camera-phone" style="max-width: 360px; height: 600px; box-shadow: 0 0 50px rgba(0,0,0,0.8); border: 2px solid var(--border-glass);">
+            <div class="phone-notch"></div>
+            <button class="phone-close-btn" id="btn-close-camera" style="top: 15px; right: 15px; z-index: 100; font-size: 24px;">&times;</button>
+            <div class="phone-screen" style="position: relative; overflow: hidden; background: #000;">
+                
+                <!-- Live Video Feed -->
+                <video id="camera-stream-video" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
+                
+                <!-- Overlay Interface Controls -->
+                <div class="camera-controls-overlay" style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px; background: linear-gradient(0deg, rgba(0,0,0,0.8) 0%, transparent 100%); display: flex; flex-direction: column; gap: 15px; align-items: center; z-index: 50;">
+                    
+                    <!-- Recording / Timer Status indicator -->
+                    <div id="camera-status-label" class="hidden" style="color: #ef4444; font-size: 12px; font-weight: 700; background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 20px; display: flex; align-items: center; gap: 6px;">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: pulseRed 1s infinite;"></span>
+                        <span id="camera-status-timer">00:00</span>
+                    </div>
+
+                    <!-- Primary Actions Buttons -->
+                    <div style="display: flex; align-items: center; justify-content: space-around; width: 100%; gap: 10px;">
+                        
+                        <!-- Toggle Mode: Photo vs Reel/Video -->
+                        <button type="button" class="btn btn-sm" id="btn-camera-mode" style="background: transparent; border-color: rgba(255,255,255,0.2); font-size: 11px; padding: 6px 12px; color: #fff;">
+                            📸 Mode: Photo
+                        </button>
+                        
+                        <!-- Main Shutter Button -->
+                        <div class="shutter-button-outer" id="btn-shutter-trigger" style="width: 70px; height: 70px; border-radius: 50%; border: 4px solid #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.2s;">
+                            <div class="shutter-button-inner" style="width: 50px; height: 50px; border-radius: 50%; background: #fff; transition: background 0.2s, border-radius 0.2s;"></div>
+                        </div>
+
+                        <!-- Switch Lens (Front / Back facingMode) -->
+                        <button type="button" class="btn btn-sm" id="btn-camera-switch" style="background: transparent; border-color: rgba(255,255,255,0.2); font-size: 11px; padding: 6px 12px; color: #fff;">
+                            🔄 Flip Camera
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

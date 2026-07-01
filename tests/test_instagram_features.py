@@ -215,3 +215,20 @@ def test_complete_instagram_news_features():
     assert len(saved_posts) == 1
     assert saved_posts[0]["post_id"] == "verified_post_100"
     print("[PASS] Post bookmarking / saved tab functionality verified successfully.")
+
+    # 10. Test Custom Post with Image file Upload
+    import io
+    dummy_image = io.BytesIO(b"dummy image data")
+    response = client.post(
+        "/posts/create",
+        data={"content": "This is a custom post with an attached image!"},
+        files={"file": ("test_upload.png", dummy_image, "image/png")},
+        headers=headers_alice
+    )
+    assert response.status_code == 201
+    post_res = response.json()
+    assert post_res["content"] == "This is a custom post with an attached image!"
+    assert post_res["image_path"] is not None
+    assert post_res["video_path"] is None
+    assert os.path.exists(post_res["image_path"])
+    print("[PASS] Custom post with file upload created successfully.")
