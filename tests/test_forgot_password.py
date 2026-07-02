@@ -6,7 +6,7 @@ os.environ["NEWS_AI_DATABASE_URL"] = "sqlite:///./test_news_ai_forgot.db"
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine
+from app.core.database import Base, engine
 
 client = TestClient(app)
 

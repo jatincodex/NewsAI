@@ -1,6 +1,6 @@
 import pytest
 import sqlite3
-from app.firebase_config import get_db_client
+from app.core.firebase_config import get_db_client
 
 @pytest.fixture(autouse=True)
 def flush_firestore_collections():

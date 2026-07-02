@@ -3,9 +3,9 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timezone
-from app.gemini_service import GeminiFactChecker
-from app.cache import invalidate_posts_cache
-from app.firebase_config import get_db_client
+from app.services.gemini_service import GeminiFactChecker
+from app.core.cache import invalidate_posts_cache
+from app.core.firebase_config import get_db_client
 
 logger = logging.getLogger(__name__)
 

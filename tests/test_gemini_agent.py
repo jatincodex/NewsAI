@@ -9,8 +9,8 @@ os.environ["NEWS_AI_DATABASE_URL"] = "sqlite:///./test_news_ai_gemini.db"
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.firebase_config import get_db_client
-from app.gemini_service import GeminiFactChecker
+from app.core.firebase_config import get_db_client
+from app.services.gemini_service import GeminiFactChecker
 
 client = TestClient(app)
 

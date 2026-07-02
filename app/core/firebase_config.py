@@ -197,8 +197,6 @@ def initialize_firebase():
 
     cred_dict = None
 
-    # Option A: Full JSON key as single env var (FIREBASE_CREDENTIALS_JSON)
-    # Easiest — paste the entire service account JSON as one env var
     cred_json_str = os.getenv("FIREBASE_CREDENTIALS_JSON")
     if cred_json_str:
         try:
@@ -207,7 +205,6 @@ def initialize_firebase():
         except Exception as e:
             logger.error(f"Failed to parse FIREBASE_CREDENTIALS_JSON: {e}")
 
-    # Option B: Individual env vars (FIREBASE_PROJECT_ID + CLIENT_EMAIL + PRIVATE_KEY)
     if not cred_dict:
         proj_id = os.getenv("FIREBASE_PROJECT_ID")
         client_email = os.getenv("FIREBASE_CLIENT_EMAIL")
@@ -239,7 +236,6 @@ def initialize_firebase():
 
     # Fallback: Local SQLite-backed mock Firestore
     logger.warning("⚠️  No Firebase credentials found. Using SQLite mock — data resets on restart!")
-    logger.warning("   To use permanent storage, create a .env file with FIREBASE_CREDENTIALS_JSON")
     _db_client = MockFirestoreClient()
     _firebase_initialized = True
     return _db_client
@@ -259,7 +255,7 @@ def verify_token(token: str) -> dict:
             raise e
             
     # Bridge for locally generated signed session tokens
-    from app.auth import AuthHandler
+    from app.core.security import AuthHandler
     verified_uid = AuthHandler.verify_token(token)
     if verified_uid:
         db = get_db_client()
@@ -278,4 +274,9 @@ def verify_token(token: str) -> dict:
             "username": verified_uid
         }
 
-    return MockFirebaseAuth.verify_id_token(token)
+    # Only fall back to MockFirebaseAuth during test executions to prevent production security bypass
+    is_test_env = "test" in os.getenv("NEWS_AI_DATABASE_URL", "")
+    if is_test_env:
+        return MockFirebaseAuth.verify_id_token(token)
+
+    raise ValueError("Invalid authentication token.")

@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.firebase_config import get_db_client, verify_token
+from app.core.firebase_config import get_db_client, verify_token
 
 client = TestClient(app)
 

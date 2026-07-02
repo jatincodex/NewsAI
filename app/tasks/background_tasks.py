@@ -1,10 +1,10 @@
 import os
 import logging
-from app.celery_app import celery_app
-from app.firebase_config import get_db_client
-from app.verification import VerificationEngine
-from app.video_synthesis import VideoSynthesisEngine
-from app.config import settings
+from app.core.celery_app import celery_app
+from app.core.firebase_config import get_db_client
+from app.services.verification import VerificationEngine
+from app.services.video_synthesis import VideoSynthesisEngine
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -82,30 +82,31 @@ def generate_video_task(post_id: str):
         post_data = post_snap.to_dict()
         post_ref.update({"status": "generating_video"})
         
-        is_test = "test" in settings.DATABASE_URL or "test" in os.getenv("NEWS_AI_DATABASE_URL", "")
         updates = {"status": "published"}
         
-        if is_test:
-            # Setup file paths
-            output_filename = f"video_{post_id}.mp4"
-            output_path = settings.GENERATED_VIDEOS_DIR / output_filename
-            
-            image_filename = f"image_{post_id}.png"
-            image_path = settings.GENERATED_IMAGES_DIR / image_filename
-            
-            # Ensure directories exist defensively
-            settings.GENERATED_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-            settings.GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-            
-            # Run static image card rendering
-            VideoSynthesisEngine.generate_static_post_image(post_data.get("content", ""), str(image_path))
-            
-            # Run video rendering engine
+        # Setup file paths
+        output_filename = f"video_{post_id}.mp4"
+        output_path = settings.GENERATED_VIDEOS_DIR / output_filename
+        
+        image_filename = f"image_{post_id}.png"
+        image_path = settings.GENERATED_IMAGES_DIR / image_filename
+        
+        # Ensure directories exist defensively
+        settings.GENERATED_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+        settings.GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Run static image card rendering
+        VideoSynthesisEngine.generate_static_post_image(post_data.get("content", ""), str(image_path))
+        
+        # Run video rendering engine (if MoviePy is installed, otherwise fallback/skip gracefully)
+        try:
             VideoSynthesisEngine.synthesize_reel(post_data.get("content", ""), str(output_path))
-            
-            # Save results
             updates["video_path"] = str(output_path)
-            updates["image_path"] = str(image_path)
+        except Exception as video_err:
+            logger.error(f"Failed to synthesize video reel for {post_id}: {video_err}")
+            
+        # Save results
+        updates["image_path"] = str(image_path)
 
         post_ref.update(updates)
         logger.info(f"Publication completed for post {post_id}.")

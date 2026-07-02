@@ -3,7 +3,7 @@ import string
 import re
 from typing import Dict, List, Tuple, Optional
 from sqlalchemy.orm import Session
-from app.models import TrustedDocument
+from app.models.models import TrustedDocument
 
 class VerificationEngine:
     @staticmethod

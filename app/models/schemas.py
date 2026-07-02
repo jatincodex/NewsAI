@@ -21,15 +21,15 @@ class TrustedDocumentCreate(BaseModel):
     content: str = Field(..., min_length=1)
 
 class TrustedDocumentResponse(BaseModel):
-    id: int
+    id: str
     title: str
     filename: str
-    uploaded_at: datetime
+    uploaded_at: str
 
     model_config = {"from_attributes": True}
 
 class SocialPostResponse(BaseModel):
-    id: int
+    id: str
     post_id: str
     source: str
     username: str
@@ -41,14 +41,13 @@ class SocialPostResponse(BaseModel):
     accuracy_percentage: Optional[float] = None
     fact_check_report: Optional[str] = None
     status: str
-    matched_document_id: Optional[int] = None
+    matched_document_id: Optional[str] = None
     matched_snippet: Optional[str] = None
     video_path: Optional[str] = None
     image_path: Optional[str] = None
     likes_count: int
-    user_id: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime
+    user_id: Optional[str] = None
+    created_at: str
 
     model_config = {"from_attributes": True}
 
@@ -62,17 +61,18 @@ class UserCreate(BaseModel):
     display_name: Optional[str] = None
 
 class UserLogin(BaseModel):
-    username: str
+    username_or_email: Optional[str] = None
+    username: Optional[str] = None
     password: str
 
 class UserResponse(BaseModel):
-    id: int
+    id: str
     username: str
     email: str
     display_name: Optional[str] = None
     bio: Optional[str] = None
     avatar_index: int
-    created_at: datetime
+    created_at: str
 
     model_config = {"from_attributes": True}
 
@@ -82,7 +82,7 @@ class UserUpdate(BaseModel):
     avatar_index: Optional[int] = None
 
 class UserProfileResponse(BaseModel):
-    id: int
+    id: str
     username: str
     display_name: Optional[str] = None
     bio: Optional[str] = None
@@ -99,13 +99,13 @@ class CommentCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
 
 class CommentResponse(BaseModel):
-    id: int
-    user_id: int
-    post_id: int
+    id: str
+    user_id: str
+    post_id: str
     text: str
     username: str
     avatar_index: int
-    created_at: datetime
+    created_at: str
 
     model_config = {"from_attributes": True}
 
@@ -114,16 +114,23 @@ class CommentResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     recipient_username: str
-    text: str = Field(..., min_length=1)
+    text: Optional[str] = None
+    encrypted_text: Optional[str] = None
+    encrypted_key_for_sender: Optional[str] = None
+    encrypted_key_for_recipient: Optional[str] = None
 
 class MessageResponse(BaseModel):
-    id: int
-    sender_id: int
-    recipient_id: int
-    text: str
+    id: str
+    sender_id: str
+    recipient_id: str
+    text: Optional[str] = None
+    encrypted_text: Optional[str] = None
+    encrypted_key_for_sender: Optional[str] = None
+    encrypted_key_for_recipient: Optional[str] = None
+    is_encrypted: bool
     sender_username: str
     recipient_username: str
-    created_at: datetime
+    created_at: str
 
     model_config = {"from_attributes": True}
 

@@ -9,9 +9,9 @@ os.environ["NEWS_AI_DATABASE_URL"] = "sqlite:///./test_news_ai_review.db"
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine, SessionLocal
-from app.models import SocialPost, TrustedDocument
-from app.config import settings
+from app.core.database import Base, engine, SessionLocal
+from app.models.models import SocialPost, TrustedDocument
+from app.core.config import settings
 
 client = TestClient(app)
 

@@ -23,5 +23,5 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_always_eager=always_eager,
-    imports=["app.tasks"]
+    imports=["app.tasks.background_tasks"]
 )

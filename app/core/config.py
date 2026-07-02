@@ -5,8 +5,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     PROJECT_NAME: str = "News AI - Ingestion & Verification Engine"
     
-    # Paths
-    BASE_DIR: Path = Path(__file__).resolve().parent.parent
+    # Paths (relative to app/core/config.py -> resolving to project root)
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     TRUSTED_DOCS_DIR: Path = BASE_DIR / "data" / "trusted_docs"
     GENERATED_VIDEOS_DIR: Path = BASE_DIR / "data" / "generated_videos"
     GENERATED_IMAGES_DIR: Path = BASE_DIR / "data" / "generated_images"
@@ -31,7 +31,7 @@ except Exception as e:
     print(f"WARNING: Settings validation failed, using safe fallback defaults: {e}", file=sys.stderr)
     class FallbackSettings:
         PROJECT_NAME = "News AI - Ingestion & Verification Engine"
-        BASE_DIR = Path(__file__).resolve().parent.parent
+        BASE_DIR = Path(__file__).resolve().parent.parent.parent
         TRUSTED_DOCS_DIR = BASE_DIR / "data" / "trusted_docs"
         GENERATED_VIDEOS_DIR = BASE_DIR / "data" / "generated_videos"
         GENERATED_IMAGES_DIR = BASE_DIR / "data" / "generated_images"
@@ -51,4 +51,3 @@ try:
 except Exception as e:
     import sys
     print(f"WARNING: Failed to create directories: {e}", file=sys.stderr)
-

@@ -2,8 +2,8 @@ import os
 import json
 import logging
 import httpx
-from app.config import settings
-from app.cache import get_cached_fact_check, set_cached_fact_check
+from app.core.config import settings
+from app.core.cache import get_cached_fact_check, set_cached_fact_check
 
 logger = logging.getLogger(__name__)
 
