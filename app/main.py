@@ -3,8 +3,6 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.api import auth, posts, messaging, trusted, review, users, comments, system
@@ -35,31 +33,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Mount static folder for assets
-app.mount("/static", StaticFiles(directory=str(settings.BASE_DIR / "static")), name="static")
 
-@app.middleware("http")
-async def add_no_cache_headers(request, call_next):
-    """Middleware to inject standard cache-busting headers for developer ease."""
-    response = await call_next(request)
-    if request.url.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-    return response
-
-# Serve static dashboard landing page
-@app.get("/", response_class=HTMLResponse)
-def read_root():
-    """Serves the News AI Platform (Instagram Clone interface)."""
-    index_path = settings.BASE_DIR / "static" / "index.html"
-    if not index_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Static landing file static/index.html not found."
-        )
-    with open(index_path, "r", encoding="utf-8") as f:
-        return f.read()
 
 # Register modular api routers
 app.include_router(auth.router)
@@ -70,3 +44,6 @@ app.include_router(review.router)
 app.include_router(users.router)
 app.include_router(comments.router)
 app.include_router(system.router)
+
+from app.api import compat
+app.include_router(compat.router)

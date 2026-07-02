@@ -2,7 +2,7 @@ import os
 import logging
 from app.core.celery_app import celery_app
 from app.core.firebase_config import get_db_client
-from app.services.verification import VerificationEngine
+from app.services.gemini_service import GeminiFactChecker
 from app.services.video_synthesis import VideoSynthesisEngine
 from app.core.config import settings
 
@@ -16,6 +16,7 @@ def process_social_post(post_id: str):
     2. Runs similarity checks against trusted documents.
     3. Evaluates Decision Gate and launches video synthesis if verified.
     """
+    import asyncio
     logger.info(f"Starting verification task for post ID: {post_id}")
     db_client = get_db_client()
     try:
@@ -29,17 +30,28 @@ def process_social_post(post_id: str):
         post_data = post_snap.to_dict()
         post_ref.update({"status": "processing"})
         
-        # Verification Layer
-        score, doc_id, snippet = VerificationEngine.verify_post(db_client, post_data.get("content", ""))
+        # Verification Layer using Gemini
+        content = post_data.get("content", "")
+        # Get trusted docs context
+        trusted_snaps = db_client.collection("trusted_docs").get()
+        trusted_ctx = "\n".join([snap.to_dict().get("content", "") for snap in trusted_snaps])
+        
+        # Run async Gemini call using asyncio.run
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(GeminiFactChecker.verify_claim(content, trusted_ctx))
+        
+        score = result.get("confidence_score", 0.0)
+        verdict = result.get("verdict", "uncertain")
         
         updates = {
             "confidence_score": score,
-            "matched_document_id": doc_id,
-            "matched_snippet": snippet
+            "verdict": verdict,
+            "logic_breakdown": result.get("logic_breakdown", ""),
+            "sources": result.get("sources", [])
         }
         
         # Decision Gate
-        if score >= settings.CONFIDENCE_THRESHOLD:
+        if score >= settings.CONFIDENCE_THRESHOLD and verdict == "verified":
             updates["status"] = "video_generation_pending"
             post_ref.update(updates)
             logger.info(f"Post {post_id} passed gate (score {score} >= {settings.CONFIDENCE_THRESHOLD}).")
@@ -53,8 +65,7 @@ def process_social_post(post_id: str):
         return {
             "post_id": post_id,
             "confidence_score": score,
-            "status": updates["status"],
-            "matched_document_id": doc_id
+            "status": updates["status"]
         }
     except Exception as e:
         logger.exception(f"Error occurred during verification task for post ID: {post_id}")

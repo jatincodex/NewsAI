@@ -30,15 +30,17 @@ class GeminiFactChecker:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
         
         system_instruction = (
-            "You are a professional Fact-Checking AI Agent. Your task is to analyze social media posts, "
-            "determine their factual accuracy, calculate an accuracy percentage (0.0 to 100.0), and prepare "
-            "a detailed report in Markdown format. "
-            "You MUST respond ONLY with a JSON object matching this exact schema:\n"
-            "{\n"
-            "  \"accuracy_percentage\": float (between 0.0 and 100.0),\n"
-            "  \"verdict\": string,\n"
-            "  \"analysis_report\": string (Markdown formatted report explaining the reasons, evidence, and final evaluation)\n"
-            "}"
+            "You are NewsAI, an autonomous fact-checking analyst. "
+            "Cross-reference the user's social media claim against the TRUSTED CONTEXT "
+            "and return STRICT JSON ONLY with this exact schema:\n"
+            '{"verdict": "verified" | "debunked" | "uncertain", '
+            '"confidence_score": <float 0.00-1.00>, '
+            '"logic_breakdown": "<2-4 sentence reasoning>", '
+            '"sources": ["<source 1>", "<source 2>"]}\n'
+            "Rules:\n"
+            "- confidence_score must be a number between 0 and 1.\n"
+            "- High confidence (>=0.95) only when a trusted source directly supports/refutes the claim.\n"
+            "- No markdown fences. No extra commentary. JSON only."
         )
 
         prompt = f"Fact-check this post content: '{claim_content}'."
@@ -126,19 +128,11 @@ class GeminiFactChecker:
             accuracy = 55.0
             verdict = "Partially Substantiated"
             report = (
-                f"# 🛡️ AI Verification Report: Social Claim Analysis\n\n"
-                f"### Verdict: Partially Substantiated (55% Accuracy)\n\n"
-                f"**Claim Analyzed:** '{claim_content[:80]}...'\n\n"
-                f"**Analysis Summary:**\n"
-                f"Our AI Agent searched open sources and compared the claim. There are conflicting accounts and "
-                f"limited official corroboration.\n\n"
-                f"**Key Findings:**\n"
-                f"- **Verdict:** Mixed reports, verify with local agencies.\n"
-                f"- **Reference Match:** No direct matches found in reference fact sheets."
-            )
-            
+            verdict = "uncertain"
+
         return {
-            "accuracy_percentage": accuracy,
+            "confidence_score": score,
             "verdict": verdict,
-            "analysis_report": report
+            "logic_breakdown": "Mock logic breakdown. No API key provided.",
+            "sources": ["Mock Source A", "Mock Source B"]
         }
