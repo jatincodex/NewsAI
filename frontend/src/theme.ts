@@ -84,4 +84,5 @@ export function statusLabel(status: string): { label: string; bg: string; fg: st
   }
 }
 
-export const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "http://127.0.0.1:8081";
+// Global Constants
+export const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "https://newsai-8cuv.onrender.com";
