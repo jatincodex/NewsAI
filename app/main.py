@@ -27,10 +27,20 @@ async def lifespan(app: FastAPI):
         pass
     logger.info("FastAPI lifespan shutdown completed.")
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Instagram-style news container platform with verification and reels synthesis.",
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
