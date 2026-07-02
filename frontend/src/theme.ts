@@ -78,11 +78,5 @@ export function statusLabel(status: string): { label: string; bg: string; fg: st
     case "verified":
       return { label: "VERIFIED", bg: C.success, fg: "#FFF" };
     case "debunked":
-      return { label: "DEBUNKED", bg: C.error, fg: "#FFF" };
-    default:
-      return { label: status.toUpperCase(), bg: C.surface3, fg: C.onSurface };
-  }
-}
-
 // Global Constants
-export const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "https://newsai-8cuv.onrender.com";
+export const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
