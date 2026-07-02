@@ -52,8 +52,11 @@ export function scoreColor(score: number | null | undefined): string {
   return C.error;
 }
 
-export function platformIcon(p: string): { name: any; color: string; label: string } {
-  switch (p) {
+export function platformIcon(p?: string | null): { name: any; color: string; label: string } {
+  if (!p) {
+    return { name: "newspaper-outline", color: C.onSurface, label: "WEB" };
+  }
+  switch (p.toLowerCase()) {
     case "x":
       return { name: "logo-twitter", color: C.xColor, label: "X" };
     case "instagram":
@@ -65,8 +68,11 @@ export function platformIcon(p: string): { name: any; color: string; label: stri
   }
 }
 
-export function statusLabel(status: string): { label: string; bg: string; fg: string } {
-  switch (status) {
+export function statusLabel(status?: string | null): { label: string; bg: string; fg: string } {
+  if (!status) {
+    return { label: "UNKNOWN", bg: C.surface3, fg: C.onSurface };
+  }
+  switch (status.toLowerCase()) {
     case "pending":
       return { label: "PENDING", bg: C.surface3, fg: C.onSurface };
     case "verifying":
