@@ -125,11 +125,7 @@ class GeminiFactChecker:
             )
         else:
             # General fallback evaluation
-            accuracy = 55.0
-            verdict = "Partially Substantiated"
-            report = (
             verdict = "uncertain"
-
         return {
             "confidence_score": score,
             "verdict": verdict,
